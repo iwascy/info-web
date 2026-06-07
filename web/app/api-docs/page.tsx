@@ -9,7 +9,7 @@ import { API_BASE, fetcher } from "@/lib/api";
 export default function ApiDocsPage() {
   const { data } = useSWR<Record<string, string>>("/api/settings", fetcher);
   const [copied, setCopied] = useState(false);
-  const token = data?.token || process.env.NEXT_PUBLIC_INGEST_TOKEN || "opspilot-dev-token";
+  const token = data?.token || process.env.NEXT_PUBLIC_INGEST_TOKEN || "<登录后从设置读取>";
   const heartbeat = `curl -X POST ${API_BASE}/api/heartbeat \\
   -H "Authorization: Bearer ${token}" \\
   -H "Content-Type: application/json" \\

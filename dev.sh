@@ -5,11 +5,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 API_PORT="${API_PORT:-8080}"
 WEB_PORT="${WEB_PORT:-3000}"
 API_BASE="${NEXT_PUBLIC_API_BASE:-http://localhost:${API_PORT}}"
-SEED=0
 
 usage() {
   cat <<EOF
-Usage: ./dev.sh [--seed]
+Usage: ./dev.sh
 
 Starts OpsPilot API and web dev server together.
 
@@ -23,9 +22,6 @@ EOF
 
 for arg in "$@"; do
   case "$arg" in
-    --seed)
-      SEED=1
-      ;;
     -h|--help)
       usage
       exit 0
@@ -51,11 +47,6 @@ require_cmd npm
 if [[ ! -d "$ROOT_DIR/web/node_modules" ]]; then
   echo "[web] node_modules not found; running npm install"
   (cd "$ROOT_DIR/web" && npm install)
-fi
-
-if [[ "$SEED" == "1" ]]; then
-  echo "[api] seeding SQLite demo data"
-  (cd "$ROOT_DIR/server" && go run . -seed)
 fi
 
 pids=()

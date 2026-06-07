@@ -7,12 +7,6 @@
 一键启动前后端：
 
 ```bash
-./dev.sh --seed
-```
-
-不重新灌数据：
-
-```bash
 ./dev.sh
 ```
 
@@ -27,7 +21,6 @@ API_PORT=8080 WEB_PORT=3000 ./dev.sh
 ```bash
 cd /Users/hcy/code/info-web/server
 go mod tidy
-go run . -seed
 go run .
 ```
 
@@ -39,11 +32,11 @@ NEXT_PUBLIC_API_BASE=http://localhost:8080 npm run dev
 
 打开 `http://localhost:3000`。
 
-默认上报令牌：`opspilot-dev-token`，也可以用 `OPSPILOT_TOKEN` 覆盖。
+首次启动时后端会生成真实访问令牌并打印在 API 日志里。也可以通过 `OPSPILOT_TOKEN` 显式指定。前端登录页使用同一个令牌进入面板，上报接口也使用该令牌作为 `Authorization: Bearer`。
 
 ## 目录
 
-- `server/`：Go REST API + SQLite 存储 + seed 数据
+- `server/`：Go REST API + SQLite 存储
 - `web/`：Next.js App Router 前端
 - `opspilot-prototype/`：静态 HTML 原型，仅作为视觉参考
 
@@ -78,14 +71,14 @@ systemctl restart opspilot-api opspilot-web
 
 ```bash
 curl -X POST http://localhost:8080/api/heartbeat \
-  -H "Authorization: Bearer opspilot-dev-token" \
+  -H "Authorization: Bearer <OPSPILOT_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"service_key":"pikpak-115-sg2","status":"running","message":"running"}'
 ```
 
 ```bash
 curl -X POST http://localhost:8080/api/progress \
-  -H "Authorization: Bearer opspilot-dev-token" \
+  -H "Authorization: Bearer <OPSPILOT_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"service_key":"pikpak-115-sg2","task_id":"pikpak_115_main","name":"PikPak → 115 网盘迁移","stage":"upload","total":50480,"processed":37965,"success":37965,"failed":249,"progress":75.2,"total_bytes":6597069766656,"done_bytes":4810363371520,"instant_files":24130,"uploaded_files":13835,"queue_size":12017,"cursor":"1184273","download_speed":42991616,"upload_speed":29360128,"current_file":"文件名已隐藏","current_stage":"upload"}'
 ```

@@ -2,11 +2,19 @@
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080";
 const ENV_TOKEN = process.env.NEXT_PUBLIC_INGEST_TOKEN;
+const STORAGE_KEY = "opspilot_token";
 
 let cachedToken: string | null = ENV_TOKEN || null;
 
 export async function fetcher<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
+  const token = getStoredToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined
+  });
+  if (res.status === 401) {
+    clearAuthToken();
+    throw new AuthError(await res.text());
+  }
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -46,9 +54,48 @@ export async function apiPut<T>(path: string, body: unknown): Promise<T> {
 
 async function authToken() {
   if (cachedToken) return cachedToken;
-  const settings = await fetcher<Record<string, string>>("/api/settings");
-  cachedToken = settings.token || "opspilot-dev-token";
+  cachedToken = getStoredToken();
+  if (!cachedToken) throw new AuthError("login required");
   return cachedToken;
+}
+
+export class AuthError extends Error {
+  name = "AuthError";
+}
+
+export function getStoredToken() {
+  if (cachedToken) return cachedToken;
+  if (typeof window === "undefined") return null;
+  cachedToken = window.localStorage.getItem(STORAGE_KEY);
+  return cachedToken;
+}
+
+export function setAuthToken(token: string) {
+  cachedToken = token;
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(STORAGE_KEY, token);
+  }
+}
+
+export function clearAuthToken() {
+  cachedToken = ENV_TOKEN || null;
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(STORAGE_KEY);
+  }
+}
+
+export async function login(token: string) {
+  const res = await fetch(`${API_BASE}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token })
+  });
+  if (!res.ok) throw new AuthError(await res.text());
+  const payload = await res.json();
+  if (payload?.token && typeof payload.token === "string") {
+    setAuthToken(payload.token);
+  }
+  return payload as { ok: boolean; token: string };
 }
 
 export { API_BASE };

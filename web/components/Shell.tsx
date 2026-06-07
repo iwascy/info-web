@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { AlertTriangle, Bell, Code2, Home, List, RefreshCw, Server, Settings, ShipWheel } from "lucide-react";
+import { AlertTriangle, Bell, Code2, Home, List, LogOut, RefreshCw, Server, Settings, ShipWheel } from "lucide-react";
 import useSWR from "swr";
-import { fetcher } from "@/lib/api";
+import { clearAuthToken, fetcher, getStoredToken } from "@/lib/api";
 import type { Alert } from "@/lib/types";
 
 const nav = [
@@ -20,8 +20,24 @@ const nav = [
 
 export function Shell({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   const pathname = usePathname();
-  const { data } = useSWR<Alert[]>("/api/alerts?status=firing", fetcher, { refreshInterval: 30000 });
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    if (!getStoredToken()) {
+      window.location.replace(`/login?next=${encodeURIComponent(pathname)}`);
+      return;
+    }
+    setReady(true);
+  }, [pathname]);
+  const { data, error } = useSWR<Alert[]>(ready ? "/api/alerts?status=firing" : null, fetcher, { refreshInterval: 30000 });
+  useEffect(() => {
+    if (error?.name === "AuthError") {
+      window.location.replace(`/login?next=${encodeURIComponent(pathname)}`);
+    }
+  }, [error, pathname]);
   const firing = data?.length || 0;
+  if (!ready) {
+    return <><div className="bg-decor" /><div className="auth-loading">正在校验访问权限...</div></>;
+  }
   return (
     <>
       <div className="bg-decor" />
@@ -43,7 +59,9 @@ export function Shell({ title, subtitle, children }: { title: string; subtitle?:
               );
             })}
           </nav>
-          <div className="sidebar-foot"><div className="avatar">K</div><div><div className="foot-name">Kane</div><div className="foot-sub">本地个人版</div></div></div>
+          <button className="sidebar-foot sidebar-logout" onClick={() => { clearAuthToken(); window.location.href = "/login"; }}>
+            <div className="avatar"><LogOut size={17} /></div><div><div className="foot-name">退出登录</div><div className="foot-sub">清除本机访问令牌</div></div>
+          </button>
         </aside>
         <div className="main">
           <header className="topbar">

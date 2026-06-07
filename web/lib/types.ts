@@ -102,9 +102,9 @@ export interface Dashboard {
   today_completed_tasks: number;
   total_synced_bytes: number;
   uptime_pct: number;
-  avg_latency_ms: number;
+  avg_progress_pct: number;
   services: Service[];
   sync_tasks: SyncTask[];
   alerts: Alert[];
-  sys: Record<string, { value: number; series: number[] }>;
+  sys: Record<string, { value: number; series: number[] } | undefined>;
 }
