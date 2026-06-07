@@ -47,6 +47,33 @@ NEXT_PUBLIC_API_BASE=http://localhost:8080 npm run dev
 - `web/`：Next.js App Router 前端
 - `opspilot-prototype/`：静态 HTML 原型，仅作为视觉参考
 
+## 生产部署
+
+当前生产站点：
+
+- URL: `https://web-info.cccy.fun`
+- 服务器：甲骨文新加坡2号机 `161.118.203.175`
+- 部署目录：`/opt/opspilot`
+- API systemd：`opspilot-api.service`
+- Web systemd：`opspilot-web.service`
+- Nginx 配置：`/etc/nginx/sites-available/web-info.cccy.fun`
+- 证书：Let's Encrypt，certbot 自动续期
+
+远端查看密钥：
+
+```bash
+ssh root@161.118.203.175 'cat /root/opspilot-secrets.txt'
+```
+
+远端常用操作：
+
+```bash
+systemctl status opspilot-api opspilot-web nginx
+journalctl -u opspilot-api -f
+journalctl -u opspilot-web -f
+systemctl restart opspilot-api opspilot-web
+```
+
 ## 上报示例
 
 ```bash
