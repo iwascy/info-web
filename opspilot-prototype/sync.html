@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>同步任务 · OpsPilot</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<script src="assets/icons.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/app.js"></script>
+<script>
+renderShell({ active:'sync', title:'同步任务', subtitle:'我的数据同步任务进行到哪了？' });
+
+let filter = 'all';
+function render() {
+  const tasks = sortedSyncTasks();
+  const hero = tasks.find(t => t.status==='running') || tasks[0];
+  const tone = statusTone(hero.status);
+
+  // summary metrics
+  const running = tasks.filter(t=>t.status==='running').length;
+  const errored = tasks.filter(t=>t.status==='error').length;
+  const done = tasks.filter(t=>t.status==='success').length;
+  const totalProcessed = tasks.reduce((s,t)=>s+(t.processed||0),0);
+
+  const metrics = `<div class="grid grid-4 mb-20">
+    ${metricCard({label:'运行中任务',value:running,note:'实时同步中',tone:'blue',ico:'sync',series:hero.throughput})}
+    ${metricCard({label:'异常任务',value:errored,note:errored?'<span class="t-red">需处理</span>':'无',tone:'red',ico:'alert',series:[0,1,0,1,1,1]})}
+    ${metricCard({label:'今日完成',value:done,note:'已归档',tone:'green',ico:'checkCircle',series:[10,11,12,13,14,14]})}
+    ${metricCard({label:'累计处理',value:fmtCompact(totalProcessed),note:'条记录',tone:'cyan',ico:'database',series:[180,195,205,210,215,217]})}
+  </div>`;
+
+  // hero
+  const heroCard = `<div class="card ${hero.status==='error'?'card-error':''} card-pad mb-20">
+    <div class="row mb-16">
+      <span class="cell-ico ic-blue" style="width:52px;height:52px;border-radius:14px">${icon('database',24)}</span>
+      <div style="flex:1">
+        <div class="row gap-12"><h2 style="font-size:22px;font-weight:700">${hero.task_name}</h2>${badge(hero.status)}</div>
+        <div class="text-muted mt-8 row gap-8" style="font-size:13px"><span class="mono">${hero.task_id}</span> · <span class="tag type-sync">${hero.source}</span> ${icon('arrowRight',14)} <span class="tag type-api">${hero.target}</span></div>
+      </div>
+      <a href="sync-detail.html?id=${hero.task_id}" class="btn btn-primary">查看详情 ${icon('arrowRight',15)}</a>
+    </div>
+    <div class="progress-row mb-20">${progressBar(hero.progress, tone, 'lg')}<span class="pct t-${tone}" style="font-size:16px">${hero.progress}%</span></div>
+    <div class="stat-grid">
+      <div class="stat-box"><div class="k">总量</div><div class="v">${fmtCompact(hero.total)}</div></div>
+      <div class="stat-box"><div class="k">已处理</div><div class="v t-blue">${fmtCompact(hero.processed)}</div></div>
+      <div class="stat-box"><div class="k">成功</div><div class="v t-green">${fmtCompact(hero.success)}</div></div>
+      <div class="stat-box"><div class="k">失败</div><div class="v t-red">${fmtCompact(hero.failed)}</div></div>
+      <div class="stat-box"><div class="k">跳过</div><div class="v t-yellow">${fmtCompact(hero.skipped)}</div></div>
+      <div class="stat-box"><div class="k">速率</div><div class="v t-cyan">${hero.speed}</div></div>
+      <div class="stat-box"><div class="k">预计剩余</div><div class="v">${hero.eta||'—'}</div></div>
+    </div>
+  </div>`;
+
+  const list = filter==='all'?tasks:tasks.filter(t=>t.status===filter);
+  const rows = list.map(t => {
+    const tn = statusTone(t.status);
+    return `<tr class="${t.status==='error'?'row-error':''}" onclick="location.href='sync-detail.html?id=${t.task_id}'" style="cursor:pointer">
+      <td><div class="cell-primary"><span class="cell-ico ic-${tn==='running'?'blue':tn}">${icon('database',18)}</span><div><div class="cell-title">${t.task_name}</div><div class="cell-key">${t.task_id}</div></div></div></td>
+      <td class="nowrap"><span class="tag type-sync">${t.source}</span> ${icon('arrowRight',13)} <span class="tag type-api">${t.target}</span></td>
+      <td>${badge(t.status)}</td>
+      <td style="min-width:160px"><div class="progress-row">${progressBar(t.progress,tn)}<span class="pct t-${tn}">${t.progress}%</span></div></td>
+      <td class="tabnum">${fmtCompact(t.processed)}/${fmtCompact(t.total)}</td>
+      <td class="t-cyan tabnum nowrap">${t.speed}</td>
+      <td class="tabnum">${t.eta||'—'}</td>
+      <td class="text-muted nowrap">${fmtTime(t.updated_at)}</td>
+    </tr>`;
+  }).join('');
+
+  const fdef=[['all','全部'],['running','运行中'],['error','异常'],['success','已完成']];
+  const chips = fdef.map(([k,l])=>`<button class="chip ${filter===k?'active':''}" onclick="filter='${k}';render()">${l}</button>`).join('');
+
+  document.getElementById('content').innerHTML = metrics + heroCard + `
+    <div class="card card-pad">
+      <div class="card-head"><h3>全部同步任务</h3><div class="chips" style="margin-left:16px">${chips}</div><span class="spacer"></span></div>
+      <div class="table-wrap"><table class="tbl">
+        <thead><tr><th>任务</th><th>链路</th><th>状态</th><th>进度</th><th>已处理/总量</th><th>速率</th><th>预计剩余</th><th>更新</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+    </div>`;
+}
+window.onRefresh = render;
+render();
+</script>
+</body>
+</html>

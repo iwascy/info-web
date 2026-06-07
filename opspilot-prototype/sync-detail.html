@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>同步任务详情 · OpsPilot</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<script src="assets/icons.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/app.js"></script>
+<script>
+const id = new URLSearchParams(location.search).get('id') || 'sync_order_001';
+const t = getById(DB.sync_tasks,'task_id',id) || DB.sync_tasks[0];
+
+renderShell({ active:'sync', title:t.task_name, subtitle:`${t.source} → ${t.target}` });
+
+const STAGE_ICON = { connect:'database', extract:'download', cleaning:'zap', writing:'layers', verify:'shield' };
+
+function render() {
+  const tone = statusTone(t.status);
+  // build stages based on task progress (use DB.stages for order-sync, derive otherwise)
+  let stages = DB.stages;
+  if (t.task_id!=='sync_order_001') {
+    const all = [['connect','连接源库'],['extract','增量抽取'],['cleaning','数据清洗'],['writing','写入目标库'],['verify','数据校验']];
+    const curIdx = all.findIndex(x=>x[0]===t.stage);
+    stages = all.map(([k,n],i)=>({ key:k, name:n,
+      status: i<curIdx?'done': i===curIdx?(t.status==='error'?'error':t.status==='success'?'done':'running'): (t.status==='success'?'done':'pending'),
+      progress: i===curIdx?t.progress:undefined }));
+  }
+  const lastDone = stages.reduce((acc,s,i)=> (s.status==='done')?i:acc, -1);
+
+  const flow = stages.map((st,i) => `
+    <div class="stage-node ${st.status}">
+      ${i<stages.length-1?`<div class="stage-line ${i<=lastDone?'filled':''}"></div>`:''}
+      <div class="dot">${st.status==='done'?icon('check',20):st.status==='error'?icon('x',20):icon(STAGE_ICON[st.key]||'layers',20)}</div>
+      <div class="s-name">${st.name}</div>
+      <div class="s-meta">${st.status==='done'?st.duration||'已完成':st.status==='running'?(st.progress!=null?st.progress+'%':'进行中'):st.status==='error'?'出错':'等待'}</div>
+    </div>`).join('');
+
+  const batchRows = DB.batches.map(b => `<tr>
+    <td class="mono">${b.range}</td>
+    <td class="tabnum">${fmtNumber(b.total)}</td>
+    <td class="t-green tabnum">${fmtNumber(b.success)}</td>
+    <td class="${b.failed?'t-red':'text-dim'} tabnum">${b.failed?fmtNumber(b.failed):'0'}</td>
+    <td class="text-muted tabnum">${b.duration}</td>
+    <td class="text-muted">${b.created_at}</td>
+  </tr>`).join('');
+
+  const errList = DB.error_samples.map(e => `
+    <div class="card card-error card-pad" style="margin-bottom:12px">
+      <div class="row"><span class="mono t-red" style="font-size:13px">${e.item_key}</span><span class="spacer"></span><span class="text-muted" style="font-size:12px">${e.created_at}</span></div>
+      <div class="mt-8" style="font-size:13.5px">${e.message}</div>
+      <details class="mt-8"><summary style="cursor:pointer;color:var(--text-muted);font-size:12.5px">查看原始 payload</summary>
+        <div class="codeblock mt-8" style="font-size:12px">${syntaxJson(e.raw)}</div></details>
+    </div>`).join('');
+
+  document.getElementById('content').innerHTML = `
+    <a href="sync.html" class="btn btn-ghost btn-sm mb-20">${icon('arrowRight',14)} 返回任务列表</a>
+
+    <div class="card ${t.status==='error'?'card-error':''} card-pad mb-20">
+      <div class="row">
+        <span class="cell-ico ic-blue" style="width:52px;height:52px;border-radius:14px">${icon('database',24)}</span>
+        <div style="flex:1">
+          <div class="row gap-12"><h2 style="font-size:22px;font-weight:700">${t.task_name}</h2>${badge(t.status)}</div>
+          <div class="text-muted mt-8 row gap-8" style="font-size:13px"><span class="mono">${t.task_id}</span> · <span class="tag type-sync">${t.source}</span> ${icon('arrowRight',14)} <span class="tag type-api">${t.target}</span></div>
+        </div>
+        <div class="row gap-8">
+          ${t.status==='error'?`<button class="btn btn-primary">${icon('refresh',16)} 重试</button>`:`<button class="btn btn-ghost">${icon('pause',16)} 暂停</button>`}
+        </div>
+      </div>
+      ${t.message?`<div class="mt-16 ${t.status==='error'?'modal-warn':''}" style="${t.status!=='error'?'color:var(--text-muted)':''}">${t.status==='error'?'⚠ ':''}${t.message}</div>`:''}
+      <div class="progress-row mt-16">${progressBar(t.progress,tone,'lg')}<span class="pct t-${tone}" style="font-size:16px">${t.progress}%</span></div>
+    </div>
+
+    <div class="card card-pad mb-20">
+      <div class="card-head"><h3>执行阶段</h3><span class="sub">连接 → 抽取 → 清洗 → 写入 → 校验</span></div>
+      <div class="stage-flow" style="padding:0 8px">${flow}</div>
+    </div>
+
+    <div class="cols-12 mb-20">
+      <div class="span-8 card card-pad hoverable">
+        <div class="card-head"><h3>吞吐速率</h3><span class="spacer"></span><span class="badge st-running"><span class="dot pulse"></span>${t.speed}</span></div>
+        ${lineChart(t.throughput, '#17d5eb', 700, 180)}
+        <div class="row mt-12" style="justify-content:space-between"><span class="text-muted" style="font-size:12px">14 分钟前</span><span class="text-muted" style="font-size:12px">现在</span></div>
+      </div>
+      <div class="span-4 card card-pad hoverable">
+        <div class="card-head"><h3>实时指标</h3></div>
+        <div class="row" style="justify-content:center;margin-bottom:18px">${gauge(t.progress, toneColor(tone), 130, 13)}</div>
+        <div class="stat-grid">
+          <div class="stat-box"><div class="k">速率</div><div class="v t-cyan">${t.speed}</div></div>
+          <div class="stat-box"><div class="k">错误率</div><div class="v ${t.error_rate>0.3?'t-red':'t-green'}">${t.error_rate}%</div></div>
+          <div class="stat-box"><div class="k">预计剩余</div><div class="v">${t.eta||'—'}</div></div>
+          <div class="stat-box"><div class="k">已同步</div><div class="v t-purple">${t.synced}</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cols-12">
+      <div class="span-7 card card-pad hoverable">
+        <div class="card-head"><h3>批次处理记录</h3><span class="spacer"></span><span class="text-muted" style="font-size:12px">每批 240 万条</span></div>
+        <div class="table-wrap"><table class="tbl">
+          <thead><tr><th>批次</th><th>总量</th><th>成功</th><th>失败</th><th>耗时</th><th>时间</th></tr></thead>
+          <tbody>${batchRows}</tbody></table></div>
+      </div>
+      <div class="span-5 card card-pad hoverable">
+        <div class="card-head"><h3>最近错误样本</h3><span class="spacer"></span><button class="btn btn-ghost btn-sm" onclick="copyText(JSON.stringify(DB.error_samples,null,2),this)">${icon('copy',14)} 导出 JSON</button></div>
+        ${DB.error_samples.length?errList:`<div class="empty">${icon('checkCircle',54)}<h4>暂无错误</h4></div>`}
+      </div>
+    </div>`;
+}
+
+function syntaxJson(obj){
+  const json = JSON.stringify(obj, null, 2);
+  return json.replace(/("(\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?)/g, m => {
+    let cls='str'; if(/:$/.test(m))cls='key'; else if(/true|false|null/.test(m))cls='cmd'; else if(/^-?\d/.test(m))cls='url';
+    return `<span class="${cls}">${m}</span>`;
+  });
+}
+window.onRefresh = render;
+render();
+</script>
+</body>
+</html>

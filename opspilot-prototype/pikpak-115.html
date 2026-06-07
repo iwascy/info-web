@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PikPak → 115 迁移 · OpsPilot</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+/* —— 本页专属样式（pikpak→115 迁移）—— */
+.mig-hero{display:grid;grid-template-columns:1.4fr 1fr;gap:22px}
+@media(max-width:1100px){.mig-hero{grid-template-columns:1fr}}
+.flow-line{position:relative;height:10px;border-radius:6px;background:rgba(120,150,200,.12);overflow:hidden}
+.flow-line .seg{position:absolute;top:0;bottom:0;border-radius:6px}
+.flow-line .seg.instant{background:linear-gradient(90deg,#29d684,#17d5eb);left:0}
+.flow-line .seg.upload{background:linear-gradient(90deg,#3785ff,#975cff)}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--text-muted)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
+.acct{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--border)}
+.acct:last-child{border-bottom:none}
+.acct .av{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;flex-shrink:0}
+.bar-mini{height:6px;border-radius:4px;background:rgba(120,150,200,.14);overflow:hidden;margin-top:6px}
+.bar-mini > i{display:block;height:100%;border-radius:4px}
+.path-tag{font-size:11px;padding:2px 8px;border-radius:6px;font-weight:600;white-space:nowrap}
+.path-instant{background:rgba(41,214,132,.14);color:var(--green)}
+.path-relay{background:rgba(55,133,255,.14);color:var(--blue-soft)}
+.path-download{background:rgba(248,184,49,.14);color:var(--yellow)}
+.dual-cur{display:flex;gap:26px;flex-wrap:wrap;margin-top:14px}
+.dual-cur .one{display:flex;align-items:center;gap:10px}
+.dual-cur .one .big{font-size:21px;font-weight:700;font-variant-numeric:tabular-nums}
+.cur-file{display:flex;align-items:center;gap:12px;padding:13px 16px;border-radius:12px;background:rgba(55,133,255,.07);border:1px solid rgba(55,133,255,.22);margin-top:16px}
+.pulse{width:9px;height:9px;border-radius:50%;background:var(--blue);box-shadow:0 0 0 0 rgba(55,133,255,.6);animation:pulse 1.6s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(55,133,255,.5)}70%{box-shadow:0 0 0 9px rgba(55,133,255,0)}100%{box-shadow:0 0 0 0 rgba(55,133,255,0)}}
+</style>
+</head>
+<body>
+<script src="assets/icons.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/app.js"></script>
+<script>
+renderShell({ active:'sync', title:'PikPak → 115 迁移', subtitle:'新加坡二号机 · 网盘文件迁移进度' });
+
+/* —— 真实字段结构（对应 telegram_saver: Event + savedSyncState）—— */
+const TB = 1099511627776, GB = 1073741824, MB = 1048576;
+const MIG = {
+  service_key:'pikpak-115-sg2', name:'PikPak → 115 网盘迁移', host:'新加坡二号机 · sg2-node',
+  status:'running', paused:false, pause_reason:'',
+  window:{ enabled:true, start:'02:00', end:'08:00', in_window:false, next:'明日 02:00（限流时段外暂缓）' },
+  cursor:1184273,                                   // LastSyncedMsgID 断点游标
+  started_at:'2026-06-05T02:00:00+08:00', last_synced_at:'2026-06-07T21:42:50+08:00',
+  total_files:50480, success_files:37965, instant_files:24130, uploaded_files:13835,
+  failed_files:249, queue_size:12017,
+  total_bytes:6597069766656, done_bytes:4810363371520,    // ~6 TB / ~4.37 TB
+  current_file:'剧集/SomeShow.S07/E12.2160p.HDR.DV.mkv', current_size:18.4*GB,
+  current_stage:'upload', current_pct:73,
+  download_speed:41*MB, upload_speed:28*MB,
+  dl_series:[36,38,34,40,42,39,44,41,37,45,43,40,38,42,41,39,43,41,44,40,38,41],
+  ul_series:[22,25,21,27,29,24,30,28,23,31,27,26,24,29,28,25,30,27,29,26,25,28],
+  pikpak:{ ok:true, account:'pp****@gmail.com', traffic_used:3.2*TB, traffic_total:5*TB, token_expire:'6 天后过期' },
+  c115:{ ok:true, account:'115****8821', quota_used:4.37*TB, quota_total:10*TB, instant_rate:0.636 },
+  stages:[
+    { key:'scan',     name:'扫描 PikPak', icon:'spider',      status:'done',    meta:'50,480 个文件' },
+    { key:'download', name:'下载 / 中转', icon:'download',    status:'running', meta:'41 MB/s' },
+    { key:'upload',   name:'上传 115',    icon:'database',    status:'running', meta:'28 MB/s' },
+    { key:'verify',   name:'sha1 校验',   icon:'shield',      status:'pending', meta:'秒传比对' },
+    { key:'done',     name:'完成',        icon:'checkCircle', status:'pending', meta:'—' },
+  ],
+  recent:[
+    { name:'E12.2160p.HDR.DV.mkv',     size:18.4*GB, path:'upload',   dl:41*MB, ul:28*MB, status:'running', dur:'01:12' },
+    { name:'E11.2160p.HDR.mkv',        size:16.1*GB, path:'instant',  dl:0,     ul:0,     status:'success', dur:'00:02' },
+    { name:'E10.1080p.x265.mkv',       size:4.2*GB,  path:'instant',  dl:0,     ul:0,     status:'success', dur:'00:01' },
+    { name:'番外.Bonus.2160p.mkv',      size:9.8*GB,  path:'download', dl:38*MB, ul:26*MB, status:'success', dur:'06:48' },
+    { name:'E09.1080p.mkv',            size:3.9*GB,  path:'instant',  dl:0,     ul:0,     status:'success', dur:'00:01' },
+    { name:'OST.flac.zip',             size:612*MB,  path:'download', dl:33*MB, ul:24*MB, status:'failed',  dur:'—' },
+    { name:'E08.2160p.HDR.mkv',        size:15.5*GB, path:'upload',   dl:40*MB, ul:27*MB, status:'success', dur:'09:31' },
+  ],
+  errors:[
+    { file:'OST.flac.zip', code:'rate_limited', reason:'115 上传限流（HTTP 429），已自动暂停并重排队', level:'warning', time:'2026-06-07T21:38:12+08:00',
+      payload:{ stage:'upload', http_status:429, retry_after:120, action:'pause_and_requeue' } },
+    { file:'E05.REMUX.mkv', code:'quota_exceeded', reason:'115 网盘配额不足，跳过该文件', level:'error', time:'2026-06-07T20:11:40+08:00',
+      payload:{ stage:'upload', need_bytes:48956231680, quota_left_bytes:12000000000 } },
+    { file:'oldpack.rar', code:'source_gone', reason:'PikPak 源文件已失效（404），无法下载', level:'error', time:'2026-06-07T18:52:03+08:00',
+      payload:{ stage:'download', http_status:404, file_id:'pp_8f3a91c2' } },
+    { file:'E04.1080p.mkv', code:'instant_miss', reason:'115 秒传未命中，已回退为下载+上传', level:'info', time:'2026-06-07T17:30:55+08:00',
+      payload:{ stage:'upload', sha1_matched:false, fallback:'download_upload' } },
+  ],
+};
+
+/* —— 双线吞吐图（下载 PikPak / 上传 115）—— */
+function dualLine(s1,c1,s2,c2,w=560,h=150){
+  const all=[...s1,...s2]; const min=Math.min(...all,0), max=Math.max(...all); const range=(max-min)||1;
+  const padL=8,padR=8,padT=14,padB=20;
+  const mk=s=>s.map((v,i)=>[padL+(i/(s.length-1))*(w-padL-padR),(h-padB)-((v-min)/range)*(h-padT-padB)]);
+  const path=p=>p.map((q,i)=>(i?'L':'M')+q[0].toFixed(1)+' '+q[1].toFixed(1)).join(' ');
+  const p1=mk(s1),p2=mk(s2);
+  let grid=''; for(let g=0;g<=3;g++){const y=padT+(g/3)*(h-padT-padB);grid+=`<line x1="${padL}" y1="${y}" x2="${w-padR}" y2="${y}" stroke="rgba(120,150,200,.1)"/>`;}
+  const area=(p,c,id)=>`<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${c}" stop-opacity=".22"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></linearGradient></defs><path d="${path(p)} L ${p[p.length-1][0].toFixed(1)} ${h-padB} L ${p[0][0].toFixed(1)} ${h-padB} Z" fill="url(#${id})"/>`;
+  const dot=(p,c)=>`<circle cx="${p[p.length-1][0].toFixed(1)}" cy="${p[p.length-1][1].toFixed(1)}" r="3.4" fill="${c}"/><circle cx="${p[p.length-1][0].toFixed(1)}" cy="${p[p.length-1][1].toFixed(1)}" r="6" fill="${c}" opacity=".25"/>`;
+  return `<svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${grid}
+    ${area(p1,c1,'a1')}${area(p2,c2,'a2')}
+    <path d="${path(p1)}" fill="none" stroke="${c1}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="${path(p2)}" fill="none" stroke="${c2}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    ${dot(p1,c1)}${dot(p2,c2)}</svg>`;
+}
+
+function render(){
+  const m=MIG;
+  const filePct=(m.success_files/m.total_files*100);
+  const bytePct=(m.done_bytes/m.total_bytes*100);
+  const instantPct=(m.instant_files/m.success_files*100);
+  const running=m.status==='running'&&!m.paused;
+
+  /* 顶部状态条 */
+  const head=`
+  <div class="card card-pad mb-20 ${m.paused?'card-error':''}">
+    <div class="row wrap" style="gap:16px">
+      <span class="cell-ico ic-blue" style="width:48px;height:48px">${icon('sync',24)}</span>
+      <div style="min-width:240px">
+        <div class="row gap-12"><h2 style="font-size:21px;font-weight:700">${m.name}</h2>${badge(m.paused?'paused':m.status, m.paused?'已暂停':statusLabel(m.status))}</div>
+        <div class="text-muted mono" style="font-size:12.5px;margin-top:4px">${m.service_key} · ${m.host}</div>
+      </div>
+      <span class="spacer"></span>
+      <div class="row gap-8">
+        ${running
+          ? `<button class="btn btn-ghost" onclick="pauseMig()">${icon('pause',16)} 暂停</button>`
+          : `<button class="btn btn-primary" onclick="resumeMig()">${icon('play',16)} 恢复</button>`}
+        <button class="btn btn-ghost btn-icon" onclick="onRefresh()">${icon('refresh',16)}</button>
+      </div>
+    </div>
+    ${m.paused?`<div class="modal-warn mt-16" style="color:var(--yellow);background:rgba(248,184,49,.08);border-color:rgba(248,184,49,.3)">⚠ ${m.pause_reason}</div>`:''}
+    <hr class="divider">
+    <div class="stat-grid">
+      <div class="stat-box"><div class="k">运行状态</div><div class="v ${running?'t-green':'t-yellow'}">${running?'迁移中':'已暂停'}</div></div>
+      <div class="stat-box"><div class="k">调度时间窗</div><div class="v" style="font-size:16px">${m.window.start}–${m.window.end}</div><div class="text-dim" style="font-size:11px;margin-top:3px">${m.window.in_window?'当前在窗口内':m.window.next}</div></div>
+      <div class="stat-box"><div class="k">断点游标 (msg_id)</div><div class="v mono t-cyan" style="font-size:16px">${fmtNumber(m.cursor)}</div></div>
+      <div class="stat-box"><div class="k">已运行</div><div class="v" style="font-size:16px">${fmtRelative(m.started_at).replace('前','')}</div></div>
+      <div class="stat-box"><div class="k">最近上报</div><div class="v" style="font-size:16px">${fmtRelative(m.last_synced_at)}</div></div>
+    </div>
+  </div>`;
+
+  /* 指标行 */
+  const metrics=`<div class="grid grid-4 mb-20">
+    ${metricCard({label:'总进度（文件）',value:filePct.toFixed(1)+'%',note:`${fmtNumber(m.success_files)} / ${fmtNumber(m.total_files)}`,tone:'blue',ico:'trendUp',series:[60,63,66,68,70,72,74,filePct]})}
+    ${metricCard({label:'115 秒传命中',value:fmtNumber(m.instant_files),note:`<span class="t-green">命中率 ${(m.c115.instant_rate*100).toFixed(1)}%</span>`,tone:'green',ico:'zap',series:[18,19,20,21,22,23,24,24.1]})}
+    ${metricCard({label:'队列积压',value:fmtNumber(m.queue_size),note:'待迁移文件',tone:'cyan',ico:'layers',series:[20,18,17,16,15,14,13,12]})}
+    ${metricCard({label:'失败',value:fmtNumber(m.failed_files),note:`<span class="t-red">需关注</span>`,tone:'red',ico:'alert',series:[120,160,190,210,225,238,245,249]})}
+  </div>`;
+
+  /* 进度 + 双账号健康 */
+  const instW=(m.instant_files/m.total_files*100), upW=(m.uploaded_files/m.total_files*100);
+  const hero=`<div class="mig-hero mb-20">
+    <div class="card card-pad">
+      <div class="card-head"><span class="cell-ico ic-blue">${icon('database',18)}</span><h3>迁移进度</h3><span class="sub">字节 + 文件双口径</span></div>
+      <div class="dual-cur">
+        <div class="one"><span class="cell-ico ic-blue" style="width:34px;height:34px">${icon('database',16)}</span><div><div class="text-muted" style="font-size:12px">数据量</div><div class="big">${fmtBytes(m.done_bytes)} <span class="text-dim" style="font-size:13px;font-weight:500">/ ${fmtBytes(m.total_bytes)}</span></div></div></div>
+        <div class="one"><span class="cell-ico ic-cyan" style="width:34px;height:34px">${icon('file',16)}</span><div><div class="text-muted" style="font-size:12px">文件数</div><div class="big">${fmtNumber(m.success_files)} <span class="text-dim" style="font-size:13px;font-weight:500">/ ${fmtNumber(m.total_files)}</span></div></div></div>
+      </div>
+      <div class="row" style="justify-content:space-between;margin:18px 0 7px"><span class="text-muted" style="font-size:12.5px">秒传 + 上传分布</span><span class="mono" style="font-size:12.5px">${bytePct.toFixed(1)}% 数据量</span></div>
+      <div class="flow-line"><div class="seg instant" style="width:${instW}%"></div><div class="seg upload" style="left:${instW}%;width:${upW}%"></div></div>
+      <div class="legend mt-12">
+        <span><i style="background:linear-gradient(90deg,#29d684,#17d5eb)"></i>秒传 ${fmtNumber(m.instant_files)}（${instantPct.toFixed(0)}%）</span>
+        <span><i style="background:linear-gradient(90deg,#3785ff,#975cff)"></i>实传 ${fmtNumber(m.uploaded_files)}</span>
+        <span><i style="background:rgba(120,150,200,.25)"></i>待迁移 ${fmtNumber(m.queue_size)}</span>
+      </div>
+      <div class="cur-file">
+        <span class="pulse"></span>
+        <div style="flex:1;min-width:0">
+          <div class="text-muted" style="font-size:11.5px">正在 ${m.current_stage==='upload'?'上传至 115':'从 PikPak 下载'} · ${m.current_pct}%</div>
+          <div class="mono" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.current_file}</div>
+        </div>
+        <div class="mono text-muted" style="font-size:12.5px;white-space:nowrap">${fmtBytes(m.current_size)}</div>
+      </div>
+    </div>
+
+    <div class="card card-pad">
+      <div class="card-head"><span class="cell-ico ic-purple">${icon('key',18)}</span><h3>两端账号</h3></div>
+      ${acctRow('pikpak','PikPak（来源）','globe', m.pikpak.ok, m.pikpak.account, m.pikpak.traffic_used, m.pikpak.traffic_total, '流量', m.pikpak.token_expire, 'blue')}
+      ${acctRow('115','115 网盘（目标）','database', m.c115.ok, m.c115.account, m.c115.quota_used, m.c115.quota_total, '配额', `秒传命中 ${(m.c115.instant_rate*100).toFixed(1)}%`, 'green')}
+    </div>
+  </div>`;
+
+  /* 阶段流 */
+  const stageNodes=m.stages.map((s,i)=>`
+    <div class="stage-node ${s.status}">
+      ${i<m.stages.length-1?`<div class="stage-line ${s.status==='done'?'filled':''}"></div>`:''}
+      <div class="dot">${icon(s.icon,20)}</div>
+      <div class="s-name">${s.name}</div>
+      <div class="s-meta">${s.meta}</div>
+    </div>`).join('');
+  const stageCard=`<div class="card card-pad mb-20">
+    <div class="card-head"><span class="cell-ico ic-cyan">${icon('layers',18)}</span><h3>迁移管线</h3><span class="sub">PikPak 拉取 → 115 推送</span></div>
+    <div class="stage-flow">${stageNodes}</div>
+  </div>`;
+
+  /* 双线吞吐 */
+  const throughput=`<div class="card card-pad mb-20">
+    <div class="card-head"><span class="cell-ico ic-blue">${icon('activity',18)}</span><h3>实时吞吐</h3>
+      <span class="spacer"></span>
+      <div class="legend">
+        <span><i style="background:#3785ff"></i>下载 PikPak <b class="t-blue mono">${fmtBytes(m.download_speed)}/s</b></span>
+        <span><i style="background:#29d684"></i>上传 115 <b class="t-green mono">${fmtBytes(m.upload_speed)}/s</b></span>
+      </div>
+    </div>
+    ${dualLine(m.dl_series,'#3785ff',m.ul_series,'#29d684')}
+    <div class="text-dim" style="font-size:11.5px;text-align:right;margin-top:6px">单位 MB/s · 最近 22 个采样点 · 上传是当前瓶颈侧</div>
+  </div>`;
+
+  /* 最近文件 */
+  const PATH_LBL={instant:'115 秒传',relay:'API 中转',upload:'下载+上传',download:'下载+上传'};
+  const PATH_CLS={instant:'path-instant',relay:'path-relay',upload:'path-download',download:'path-download'};
+  const recRows=m.recent.map(r=>`<tr class="${r.status==='failed'?'row-error':''}">
+    <td><div class="mono" style="font-size:13px">${r.name}</div></td>
+    <td class="mono text-muted nowrap">${fmtBytes(r.size)}</td>
+    <td><span class="path-tag ${PATH_CLS[r.path]}">${PATH_LBL[r.path]}</span></td>
+    <td class="mono nowrap">${r.dl?`<span class="t-blue">↓${fmtBytes(r.dl)}/s</span>`:'<span class="text-dim">—</span>'}</td>
+    <td class="mono nowrap">${r.ul?`<span class="t-green">↑${fmtBytes(r.ul)}/s</span>`:'<span class="text-dim">—</span>'}</td>
+    <td>${badge(r.status==='running'?'running':r.status==='success'?'success':'error', statusLabel(r.status==='running'?'running':r.status==='success'?'success':'error'))}</td>
+    <td class="mono text-muted nowrap">${r.dur}</td>
+  </tr>`).join('');
+  const recCard=`<div class="card card-pad mb-20">
+    <div class="card-head"><span class="cell-ico ic-green">${icon('list',18)}</span><h3>最近迁移文件</h3><span class="sub">秒传 / 中转 / 下载上传 三种路径</span></div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>文件</th><th>大小</th><th>路径</th><th>下载</th><th>上传</th><th>状态</th><th>耗时</th></tr></thead><tbody>${recRows}</tbody></table></div>
+  </div>`;
+
+  /* 错误样本 */
+  const errItems=m.errors.map(e=>`
+    <div class="tl-item ${e.level==='error'?'error':e.level==='warning'?'running':'success'}">
+      <div class="tl-dot"></div>
+      <div class="tl-head"><span class="tl-msg">${e.reason}</span><span class="tag mono" style="background:rgba(255,91,111,.12);color:var(--red);font-size:11px">${e.code}</span></div>
+      <div class="tl-time"><span class="mono">${e.file}</span> · ${fmtTime(e.time)} · ${fmtRelative(e.time)}</div>
+      <details class="mt-8"><summary style="cursor:pointer;color:var(--text-muted);font-size:12.5px">原始 payload</summary>
+        <div class="codeblock mt-8" style="font-size:12px">${syntaxJson(e.payload)}</div></details>
+    </div>`).join('');
+  const errCard=`<div class="card card-error card-pad">
+    <div class="card-head"><span class="cell-ico ic-red">${icon('bug',18)}</span><h3 class="t-red">异常样本</h3><span class="sub">限流 / 配额 / 源失效 / 秒传未命中</span></div>
+    <div class="timeline">${errItems}</div>
+  </div>`;
+
+  document.getElementById('content').innerHTML = head + metrics + hero + stageCard + throughput + recCard + errCard;
+}
+
+function acctRow(key,name,ico,ok,account,used,total,unit,sub,tone){
+  const pct=used/total*100;
+  return `<div class="acct">
+    <span class="av ic-${tone}">${icon(ico,20)}</span>
+    <div style="flex:1;min-width:0">
+      <div class="row gap-8"><span style="font-weight:600">${name}</span>${ok?badge('healthy','正常'):badge('error','异常')}</div>
+      <div class="text-muted mono" style="font-size:12px;margin-top:2px">${account} · ${sub}</div>
+      <div class="bar-mini"><i style="width:${pct}%;background:var(--${tone})"></i></div>
+      <div class="row" style="justify-content:space-between;margin-top:5px"><span class="text-dim" style="font-size:11.5px">${unit} ${fmtBytes(used)} / ${fmtBytes(total)}</span><span class="mono text-muted" style="font-size:11.5px">${pct.toFixed(0)}%</span></div>
+    </div>
+  </div>`;
+}
+
+function syntaxJson(obj){
+  const json=JSON.stringify(obj,null,2);
+  return json.replace(/("(\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?)/g, m=>{
+    let cls='str'; if(/:$/.test(m))cls='key'; else if(/true|false|null/.test(m))cls='cmd'; else if(/^-?\d/.test(m))cls='url';
+    return `<span class="${cls}">${m}</span>`;
+  });
+}
+function pauseMig(){ MIG.status='paused'; MIG.paused=true; MIG.pause_reason='手动暂停 · 队列已保存，恢复后从断点游标继续'; MIG.stages.forEach(s=>{if(s.status==='running')s.status='pending';}); toast('迁移已暂停','pause'); render(); }
+function resumeMig(){ MIG.status='running'; MIG.paused=false; MIG.pause_reason=''; MIG.stages[1].status='running'; MIG.stages[2].status='running'; toast('迁移已恢复','play'); render(); }
+window.onRefresh = render;
+render();
+</script>
+</body>
+</html>

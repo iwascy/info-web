@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>日志 · OpsPilot</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<script src="assets/icons.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/app.js"></script>
+<script>
+renderShell({ active:'logs', title:'事件日志', subtitle:'所有服务的心跳、进度与异常事件流' });
+
+let typeFilter='all', q='';
+const TYPE_TONE = { heartbeat:'cyan', progress:'blue', error:'red', system:'purple' };
+const TYPE_LBL = { heartbeat:'心跳', progress:'进度', error:'异常', system:'系统' };
+
+function render() {
+  let list = DB.events.slice().sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+  if(typeFilter!=='all') list=list.filter(e=>e.type===typeFilter);
+  if(q) list=list.filter(e=>(e.service_key+e.message).toLowerCase().includes(q.toLowerCase()));
+
+  const counts={all:DB.events.length}; DB.events.forEach(e=>counts[e.type]=(counts[e.type]||0)+1);
+  const fdef=[['all','全部'],['error','异常'],['progress','进度'],['heartbeat','心跳'],['system','系统']];
+  const chips=fdef.map(([k,l])=>`<button class="chip ${typeFilter===k?'active':''}" onclick="setType('${k}')">${l}<span class="count">${counts[k]||0}</span></button>`).join('');
+
+  const items = list.map(e => `
+    <div class="tl-item ${e.status==='error'?'error':e.status==='ok'?'success':e.status}">
+      <div class="tl-dot"></div>
+      <div class="tl-head">
+        <span class="tl-msg">${e.message}</span>
+        <span class="tag" style="background:rgba(${e.type==='error'?'255,91,111':e.type==='heartbeat'?'23,213,235':e.type==='system'?'151,92,255':'55,133,255'},0.13);color:var(--${TYPE_TONE[e.type]})">${TYPE_LBL[e.type]}</span>
+        ${badge(e.status,statusLabel(e.status))}
+      </div>
+      <div class="tl-time"><a href="service-detail.html?key=${e.service_key}" style="color:var(--blue-soft);text-decoration:none">${e.service_key}</a> · ${fmtTime(e.created_at)} · ${fmtRelative(e.created_at)}</div>
+      <details class="mt-8"><summary style="cursor:pointer;color:var(--text-muted);font-size:12.5px">原始 payload</summary>
+        <div class="codeblock mt-8" style="font-size:12px">${syntaxJson(e.raw_payload)}</div></details>
+    </div>`).join('');
+
+  document.getElementById('content').innerHTML = `
+    <div class="row wrap mb-20" style="gap:14px">
+      <div class="chips">${chips}</div>
+      <span class="spacer"></span>
+      <div class="search"><span>${icon('search',17)}</span><input id="q" placeholder="搜索服务或消息…" value="${q}"></div>
+      <button class="btn btn-ghost" onclick="copyText(JSON.stringify(DB.events,null,2),this)">${icon('download',16)} 导出</button>
+    </div>
+    <div class="card card-pad">
+      <div class="card-head"><h3>事件流</h3><span class="sub">共 ${list.length} 条</span></div>
+      ${list.length?`<div class="timeline">${items}</div>`:`<div class="empty">${icon('list',54)}<h4>暂无事件</h4></div>`}
+    </div>`;
+
+  const qi=document.getElementById('q');
+  qi.oninput=e=>{ q=e.target.value; const p=e.target.selectionStart; render(); const n=document.getElementById('q'); n.focus(); n.setSelectionRange(p,p); };
+}
+function setType(t){ typeFilter=t; render(); }
+function syntaxJson(obj){
+  const json=JSON.stringify(obj,null,2);
+  return json.replace(/("(\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?)/g, m=>{
+    let cls='str'; if(/:$/.test(m))cls='key'; else if(/true|false|null/.test(m))cls='cmd'; else if(/^-?\d/.test(m))cls='url';
+    return `<span class="${cls}">${m}</span>`;
+  });
+}
+window.onRefresh = render;
+render();
+</script>
+</body>
+</html>

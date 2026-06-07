@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>设置 · OpsPilot</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<script src="assets/icons.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/app.js"></script>
+<script>
+renderShell({ active:'settings', title:'设置', subtitle:'新增服务、管理接入令牌与系统偏好' });
+
+let ingest = 'pat_ops_3f9a1c8e7b2d4f6a';
+let pickMethod = 'heartbeat';
+
+function render() {
+  const methods = [
+    { k:'heartbeat', name:'Heartbeat 心跳', tone:'green', desc:'适合 API、Worker、常驻脚本，每 30 秒上报一次存活状态' },
+    { k:'progress', name:'Progress 进度', tone:'blue', desc:'适合同步任务、爬虫、批处理，处理一批数据后上报进度' },
+    { k:'manual', name:'只手动创建', tone:'purple', desc:'仅作为占位服务，后续再补充接入方式' },
+  ];
+  const methodCards = methods.map(m => `
+    <div onclick="pickMethod='${m.k}';render()" class="card hoverable" style="cursor:pointer;padding:18px 20px;border-color:${pickMethod===m.k?'var(--'+m.tone+')':'var(--border)'};${pickMethod===m.k?`box-shadow:0 0 0 1px var(--${m.tone}),0 0 24px rgba(55,133,255,0.12)`:''}">
+      <div class="row"><div style="flex:1"><div style="font-weight:700;font-size:16px" class="t-${m.tone}">${m.name}</div><div class="text-muted mt-8" style="font-size:13px">${m.desc}</div></div>
+      <span style="width:22px;height:22px;border-radius:50%;border:2px solid var(--${m.tone});display:grid;place-items:center">${pickMethod===m.k?`<span style="width:11px;height:11px;border-radius:50%;background:var(--${m.tone})"></span>`:''}</span></div>
+    </div>`).join('');
+
+  document.getElementById('content').innerHTML = `
+    <div class="cols-12">
+      <div class="span-7">
+        <div class="card card-pad mb-20">
+          <div class="card-head"><span class="cell-ico ic-blue">${icon('plus',18)}</span><h3>新增服务</h3></div>
+          <div class="grid grid-2 gap-20">
+            <div>
+              <div class="field"><label>服务名称</label><input class="input" id="svcName" placeholder="例如：订单同步服务"></div>
+              <div class="field"><label>service_key</label><input class="input mono" id="svcKey" placeholder="例如：order-sync"></div>
+              <div class="field"><label>服务类型</label>
+                <select class="select input" id="svcType" style="width:100%">
+                  <option value="sync">sync · 同步</option><option value="api">api · API</option>
+                  <option value="crawler">crawler · 爬虫</option><option value="script">script · 脚本</option>
+                  <option value="agent">agent · Agent</option><option value="worker">worker · Worker</option>
+                </select>
+              </div>
+              <div class="field"><label>心跳超时（秒）</label><input class="input" type="number" value="90"></div>
+            </div>
+            <div>
+              <label style="display:block;font-size:13px;color:var(--text-muted);margin-bottom:8px">接入方式</label>
+              <div class="col gap-12">${methodCards}</div>
+            </div>
+          </div>
+          <hr class="divider">
+          <div class="row"><div class="text-muted" style="font-size:13px">${icon('info',15)} 生成后接入命令会出现在 API 文档页，复制 curl 到脚本中即可完成接入。</div><span class="spacer"></span><button class="btn btn-primary" onclick="createSvc()">${icon('plus',16)} 创建服务</button></div>
+        </div>
+
+        <div class="card card-pad">
+          <div class="card-head"><span class="cell-ico ic-yellow">${icon('key',18)}</span><h3>接入令牌</h3></div>
+          <p class="text-muted mb-16" style="font-size:13.5px">所有上报请求需在 Header 携带 <code class="mono t-cyan">Authorization: Bearer &lt;token&gt;</code></p>
+          <div class="row gap-12">
+            <div class="search" style="flex:1;min-width:0"><span>${icon('key',16)}</span><input id="tok" class="mono" readonly value="${ingest}" style="font-size:13px"></div>
+            <button class="btn btn-ghost" onclick="copyText(ingest,this)">${icon('copy',16)} 复制</button>
+            <button class="btn btn-danger" onclick="resetToken()">${icon('refresh',16)} 重置</button>
+          </div>
+          <div class="modal-warn mt-16" style="color:var(--yellow);background:rgba(248,184,49,0.08);border-color:rgba(248,184,49,0.3)">⚠ 重置后旧令牌立即失效，所有服务需更新接入配置。</div>
+        </div>
+      </div>
+
+      <div class="span-5">
+        <div class="card card-pad mb-20">
+          <div class="card-head"><span class="cell-ico ic-cyan">${icon('settings',18)}</span><h3>偏好设置</h3></div>
+          ${pref('默认自动刷新','面板加载后自动开启刷新',true)}
+          ${pref('异常服务桌面通知','触发高优先级告警时提醒',true)}
+          ${pref('深色科技主题','当前唯一可用主题',true)}
+          ${pref('表格密集模式','缩小行高显示更多数据',false)}
+        </div>
+
+        <div class="card card-pad mb-20">
+          <div class="card-head"><span class="cell-ico ic-blue">${icon('info',18)}</span><h3>系统信息</h3></div>
+          <div class="stat-grid">
+            <div class="stat-box"><div class="k">版本</div><div class="v">V1.0.0</div></div>
+            <div class="stat-box"><div class="k">服务数</div><div class="v t-blue">${DB.services.length}</div></div>
+            <div class="stat-box"><div class="k">运行模式</div><div class="v">本地</div></div>
+            <div class="stat-box"><div class="k">数据保留</div><div class="v">30 天</div></div>
+          </div>
+        </div>
+
+        <div class="card card-error card-pad">
+          <div class="card-head"><span class="cell-ico ic-red">${icon('alert',18)}</span><h3 class="t-red">危险操作</h3></div>
+          <div class="col gap-12">
+            <button class="btn btn-danger" style="justify-content:space-between" onclick="confirmDialog({title:'清空历史事件',body:'确认清空所有服务的历史事件记录吗？',warn:'此操作不可恢复，将删除全部日志数据。',confirmText:'清空',onConfirm:()=>toast('历史事件已清空','check')})">清空历史事件 ${icon('trash',15)}</button>
+            <button class="btn btn-danger" style="justify-content:space-between" onclick="confirmDialog({title:'重置所有数据',body:'确认重置 OpsPilot 全部数据吗？',warn:'所有服务、任务、告警与令牌将被永久删除。',confirmText:'重置全部',onConfirm:()=>toast('数据已重置','check')})">重置所有数据 ${icon('trash',15)}</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+function pref(title,desc,on){
+  return `<div class="row" style="padding:11px 0;border-bottom:1px solid var(--border)">
+    <div style="flex:1"><div style="font-weight:600;font-size:14px">${title}</div><div class="text-muted" style="font-size:12.5px;margin-top:2px">${desc}</div></div>
+    <label class="switch"><input type="checkbox" ${on?'checked':''}><span class="track"></span><span class="thumb"></span></label></div>`;
+}
+function createSvc(){
+  const name=document.getElementById('svcName').value.trim();
+  const key=document.getElementById('svcKey').value.trim();
+  if(!name||!key){ toast('请填写服务名称与 service_key','x'); return; }
+  const type=document.getElementById('svcType').value;
+  DB.services.push({ id:'svc_'+Date.now(), service_key:key, name, type, status:'unknown', message:'等待首次上报', last_heartbeat_at:null, last_progress_at:null, progress:null, heartbeat_series:[0,0,0,0,0,0,0,0,0,0,0,0,0], uptime:'—' });
+  toast('服务已创建，等待首次上报','check');
+  setTimeout(()=>location.href='services.html',700);
+}
+function resetToken(){
+  confirmDialog({ title:'重置接入令牌', body:'确认重置全局接入令牌吗？', warn:'旧令牌立即失效，所有服务需更新接入配置。', confirmText:'重置令牌',
+    onConfirm:()=>{ ingest='pat_ops_'+Math.random().toString(16).slice(2,18); toast('令牌已重置','check'); render(); } });
+}
+window.onRefresh = render;
+render();
+</script>
+</body>
+</html>

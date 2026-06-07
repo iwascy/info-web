@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>服务 · OpsPilot</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<script src="assets/icons.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/app.js"></script>
+<script>
+renderShell({ active:'services', title:'服务', subtitle:'管理所有接入 OpsPilot 的服务' });
+
+let state = { filter:'all', view:'table', q:'' };
+
+function counts() {
+  const c = { all: DB.services.length };
+  DB.services.forEach(s => c[s.status] = (c[s.status]||0)+1);
+  return c;
+}
+
+function filtered() {
+  return sortedServices().filter(s => {
+    if (state.filter!=='all' && s.status!==state.filter) return false;
+    if (state.q && !(s.name+s.service_key).toLowerCase().includes(state.q.toLowerCase())) return false;
+    return true;
+  });
+}
+
+function render() {
+  const c = counts();
+  const chipDef = [
+    ['all','全部',c.all],['error','异常',c.error||0],['running','运行中',c.running||0],
+    ['healthy','正常',c.healthy||0],['unknown','未知',c.unknown||0],
+  ];
+  const chips = chipDef.map(([k,l,n]) => `<button class="chip ${state.filter===k?'active':''}" onclick="setFilter('${k}')">${l}<span class="count">${n}</span></button>`).join('');
+
+  const list = filtered();
+  let body;
+  if (!list.length) {
+    body = `<div class="card card-pad"><div class="empty">${icon('search',54)}<h4>没有匹配的服务</h4><p>试试调整筛选或搜索关键词</p></div></div>`;
+  } else if (state.view==='table') {
+    const rows = list.map(s => {
+      const tone = statusTone(s.status);
+      return `<tr class="${s.status==='error'?'row-error':''}">
+        <td><div class="cell-primary">${cellIcon(s.type)}<div><div class="cell-title">${s.name}</div><div class="cell-key">${s.service_key}</div></div></div></td>
+        <td>${typeTag(s.type)}</td>
+        <td>${badge(s.status)}</td>
+        <td style="min-width:150px">${s.progress!=null ? `<div class="progress-row">${progressBar(s.progress,tone)}<span class="pct t-${tone}">${s.progress}%</span></div>` : '<span class="text-dim">—</span>'}</td>
+        <td class="text-muted nowrap">${fmtRelative(s.last_heartbeat_at)}</td>
+        <td class="text-muted" style="max-width:220px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s.message||'—'}</div></td>
+        <td><div class="row gap-8">
+          <a href="service-detail.html?key=${s.service_key}" class="btn btn-ghost btn-sm">详情</a>
+          <button class="btn btn-danger btn-sm btn-icon" onclick="delSvc('${s.service_key}','${s.name}')">${icon('trash',15)}</button>
+        </div></td>
+      </tr>`;
+    }).join('');
+    body = `<div class="card card-pad"><div class="table-wrap"><table class="tbl">
+      <thead><tr><th>服务</th><th>类型</th><th>状态</th><th>进度</th><th>最近心跳</th><th>最近消息</th><th>操作</th></tr></thead>
+      <tbody>${rows}</tbody></table></div></div>`;
+  } else {
+    const cards = list.map(s => {
+      const tone = statusTone(s.status);
+      return `<a href="service-detail.html?key=${s.service_key}" class="card card-pad hoverable ${s.status==='error'?'card-error':''}" style="display:block;text-decoration:none;color:inherit">
+        <div class="row" style="margin-bottom:14px">
+          ${cellIcon(s.type)}
+          <div style="flex:1;min-width:0"><div class="cell-title">${s.name}</div><div class="cell-key">${s.service_key}</div></div>
+          ${badge(s.status)}
+        </div>
+        ${s.progress!=null ? `<div class="progress-row mb-12">${progressBar(s.progress,tone)}<span class="pct t-${tone}">${s.progress}%</span></div>` : ''}
+        <div class="text-muted" style="font-size:13px;min-height:20px">${s.message||'—'}</div>
+        <hr class="divider">
+        <div class="row" style="justify-content:space-between;font-size:12.5px" class="text-muted">
+          <span class="text-muted">${typeTag(s.type)}</span>
+          <span class="text-muted">心跳 ${fmtRelative(s.last_heartbeat_at)}</span>
+        </div>
+      </a>`;
+    }).join('');
+    body = `<div class="grid grid-3">${cards}</div>`;
+  }
+
+  document.getElementById('content').innerHTML = `
+    <div class="row wrap mb-20" style="gap:14px">
+      <div class="chips">${chips}</div>
+      <span class="spacer"></span>
+      <div class="search"><span>${icon('search',17)}</span><input id="q" placeholder="搜索服务名称或 key…" value="${state.q}"></div>
+      <div class="row gap-8" style="background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:3px">
+        <button class="btn btn-sm ${state.view==='table'?'btn-primary':'btn-ghost'}" style="border:none" onclick="setView('table')">${icon('list',15)}</button>
+        <button class="btn btn-sm ${state.view==='grid'?'btn-primary':'btn-ghost'}" style="border:none" onclick="setView('grid')">${icon('grid',15)}</button>
+      </div>
+      <a href="settings.html" class="btn btn-primary">${icon('plus',16)} 新增服务</a>
+    </div>
+    ${body}`;
+
+  const q = document.getElementById('q');
+  q.oninput = e => { state.q = e.target.value; const pos=e.target.selectionStart; render(); const nq=document.getElementById('q'); nq.focus(); nq.setSelectionRange(pos,pos); };
+}
+function setFilter(f){ state.filter=f; render(); }
+function setView(v){ state.view=v; render(); }
+function delSvc(key,name){
+  confirmDialog({ title:'删除服务', body:`确认删除服务「${name}」(${key}) 吗？`, warn:'该服务的心跳、进度与历史事件将一并移除，且无法恢复。', confirmText:'删除',
+    onConfirm:()=>{ DB.services = DB.services.filter(s=>s.service_key!==key); toast('服务已删除','check'); render(); } });
+}
+window.onRefresh = render;
+render();
+</script>
+</body>
+</html>

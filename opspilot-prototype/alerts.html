@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>告警 · OpsPilot</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<script src="assets/icons.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/app.js"></script>
+<script>
+renderShell({ active:'alerts', title:'告警中心', subtitle:'哪个服务或任务出现了异常？' });
+
+let filter='all';
+function render() {
+  const firing = DB.alerts.filter(a=>a.status==='firing');
+  const high = DB.alerts.filter(a=>a.severity==='high'&&a.status==='firing');
+  const resolved = DB.alerts.filter(a=>a.status==='resolved');
+
+  const metrics = `<div class="grid grid-4 mb-20">
+    ${metricCard({label:'触发中',value:firing.length,note:'<span class="t-red">需要处理</span>',tone:'red',ico:'bell',series:[1,2,2,3,3,3]})}
+    ${metricCard({label:'高优先级',value:high.length,note:'High severity',tone:'yellow',ico:'alert',series:[0,1,1,2,2,2]})}
+    ${metricCard({label:'今日已恢复',value:resolved.length,note:'自动/手动恢复',tone:'green',ico:'checkCircle',series:[0,1,1,2,2,2]})}
+    ${metricCard({label:'平均处理时长',value:'11m',note:'MTTR',tone:'cyan',ico:'clock',series:[14,12,13,11,10,11]})}
+  </div>`;
+
+  let list = DB.alerts.slice().sort((a,b)=>{
+    const sa=a.status==='firing'?0:1, sb=b.status==='firing'?0:1;
+    if(sa!==sb) return sa-sb;
+    const sev={high:0,medium:1,low:2};
+    return sev[a.severity]-sev[b.severity];
+  });
+  if(filter==='firing') list=list.filter(a=>a.status==='firing');
+  else if(filter==='resolved') list=list.filter(a=>a.status==='resolved');
+  else if(filter==='high') list=list.filter(a=>a.severity==='high');
+
+  const rows = list.map(a => `<tr class="${a.status==='firing'&&a.severity==='high'?'row-error':''}">
+    <td><span class="sev sev-${a.severity}">${a.severity}</span></td>
+    <td><div class="cell-title">${a.title}</div><div class="text-muted" style="font-size:12.5px;margin-top:3px">${a.message||''}</div></td>
+    <td><a href="service-detail.html?key=${a.service_key}" class="cell-key" style="color:var(--blue-soft);text-decoration:none">${a.service_key}</a>${a.task_id?`<div class="text-dim" style="font-size:11.5px;margin-top:2px">${a.task_id}</div>`:''}</td>
+    <td>${badge(a.status, statusLabel(a.status))}</td>
+    <td class="text-muted nowrap">${fmtTime(a.triggered_at)}<div class="text-dim" style="font-size:11.5px">${fmtRelative(a.triggered_at)}</div></td>
+    <td>${a.status==='firing'?`<div class="row gap-8"><button class="btn btn-ghost btn-sm" onclick="resolve('${a.id}')">${icon('check',14)} 标记恢复</button><button class="btn btn-ghost btn-sm" onclick="mute('${a.id}')">静默</button></div>`:`<span class="text-muted" style="font-size:12.5px">${fmtTime(a.resolved_at)} 恢复</span>`}</td>
+  </tr>`).join('');
+
+  const fdef=[['all','全部'],['firing','触发中'],['high','高优先级'],['resolved','已恢复']];
+  const chips=fdef.map(([k,l])=>`<button class="chip ${filter===k?'active':''}" onclick="filter='${k}';render()">${l}</button>`).join('');
+
+  document.getElementById('content').innerHTML = metrics + `
+    <div class="card card-pad">
+      <div class="card-head"><h3>告警列表</h3><div class="chips" style="margin-left:16px">${chips}</div><span class="spacer"></span><button class="btn btn-ghost btn-sm" onclick="confirmDialog({title:'全部标记为已恢复',body:'确认将所有触发中的告警标记为已恢复吗？',danger:false,confirmText:'全部恢复',onConfirm:resolveAll})">${icon('check',14)} 全部恢复</button></div>
+      ${list.length?`<div class="table-wrap"><table class="tbl"><thead><tr><th>级别</th><th>告警</th><th>来源</th><th>状态</th><th>触发时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>`:`<div class="empty">${icon('shield',54)}<h4>没有匹配的告警</h4><p>系统运行平稳</p></div>`}
+    </div>`;
+}
+function resolve(id){ const a=getById(DB.alerts,'id',id); a.status='resolved'; a.resolved_at='2026-06-07T21:44:00+08:00'; toast('告警已标记恢复','check'); render(); }
+function mute(id){ const a=getById(DB.alerts,'id',id); a.status='muted'; toast('告警已静默','check'); render(); }
+function resolveAll(){ DB.alerts.forEach(a=>{if(a.status==='firing'){a.status='resolved';a.resolved_at='2026-06-07T21:44:00+08:00';}}); toast('已全部恢复','check'); render(); }
+window.onRefresh = render;
+render();
+</script>
+</body>
+</html>

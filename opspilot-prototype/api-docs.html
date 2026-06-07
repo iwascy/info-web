@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>API 文档 · OpsPilot</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<script src="assets/icons.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/app.js"></script>
+<script>
+renderShell({ active:'docs', title:'API 接入文档', subtitle:'复制 curl 到你的脚本中即可完成接入' });
+
+const TOKEN = 'pat_ops_3f9a1c8e7b2d4f6a';
+const BASE = 'http://localhost:3000/api';
+
+const SNIPPETS = {
+  heartbeat: {
+    title:'Heartbeat · 心跳上报', method:'POST', path:'/heartbeat', tone:'green',
+    desc:'常驻服务每 30 秒上报一次存活状态。',
+    fields:[['service_key','string','必填 · 服务唯一标识'],['status','string','ok / running / error'],['message','string','可选 · 状态描述']],
+    code:`curl -X POST ${BASE}/heartbeat \\
+  -H "Authorization: Bearer ${TOKEN}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "service_key": "user-api",
+    "status": "ok",
+    "message": "running"
+  }'`
+  },
+  progress: {
+    title:'Progress · 进度上报', method:'POST', path:'/progress', tone:'blue',
+    desc:'批处理 / 同步任务处理一批数据后上报进度。',
+    fields:[['service_key','string','必填'],['task_id','string','任务标识'],['stage','string','当前阶段'],['total / processed','number','总量 / 已处理'],['progress','number','0-100']],
+    code:`curl -X POST ${BASE}/progress \\
+  -H "Authorization: Bearer ${TOKEN}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "service_key": "order-sync",
+    "task_id": "sync_order_001",
+    "stage": "cleaning",
+    "total": 320000000,
+    "processed": 217600000,
+    "success": 215800000,
+    "failed": 1320000,
+    "progress": 68,
+    "message": "正在清洗订单数据"
+  }'`
+  }
+};
+
+const ENDPOINTS = [
+  ['GET','/dashboard','总览统计数据'],
+  ['GET','/services','服务列表'],
+  ['POST','/services','创建服务'],
+  ['GET','/services/{key}','服务详情'],
+  ['DELETE','/services/{key}','删除服务'],
+  ['POST','/heartbeat','心跳上报'],
+  ['POST','/progress','进度上报'],
+  ['GET','/sync-tasks','同步任务列表'],
+  ['GET','/sync-tasks/{id}','同步任务详情'],
+  ['GET','/alerts','告警列表'],
+  ['GET','/events','事件列表'],
+];
+const METHOD_TONE = { GET:'cyan', POST:'green', DELETE:'red', PUT:'yellow' };
+
+function highlight(code){
+  return code
+    .replace(/curl|-X|POST|GET|-H|-d/g, m=>`<span class="cmd">${m}</span>`)
+    .replace(/(https?:\/\/[^\s"\\]+)/g, m=>`<span class="url">${m}</span>`)
+    .replace(/"([^"]+)":/g, (m,p)=>`"<span class="key">${p}</span>":`)
+    .replace(/: ?"([^"]*)"/g, (m,p)=>`: "<span class="str">${p}</span>"`);
+}
+
+function snippetCard(s){
+  const fields = s.fields.map(([k,t,d])=>`<tr><td class="mono t-cyan">${k}</td><td class="text-muted mono" style="font-size:12px">${t}</td><td class="text-muted">${d}</td></tr>`).join('');
+  return `<div class="card card-pad hoverable">
+    <div class="card-head"><span class="badge st-${s.tone==='green'?'healthy':'running'}">${s.method}</span><h3>${s.title}</h3><span class="spacer"></span><span class="mono text-muted" style="font-size:13px">${s.path}</span></div>
+    <p class="text-muted mb-16" style="font-size:13.5px">${s.desc}</p>
+    <div class="codeblock">${highlight(s.code)}<button class="copy-btn" onclick="copyText(\`${s.code.replace(/`/g,'\\`')}\`,this)">${icon('copy',14)} 复制</button></div>
+    <div class="mt-16"><table class="tbl"><thead><tr><th>字段</th><th>类型</th><th>说明</th></tr></thead><tbody>${fields}</tbody></table></div>
+  </div>`;
+}
+
+function render() {
+  const epRows = ENDPOINTS.map(([m,p,d])=>`<tr>
+    <td><span class="tag" style="background:rgba(${m==='GET'?'23,213,235':m==='POST'?'41,214,132':m==='DELETE'?'255,91,111':'248,184,49'},0.14);color:var(--${METHOD_TONE[m]})">${m}</span></td>
+    <td class="mono" style="font-size:13px">${BASE}${p}</td>
+    <td class="text-muted">${d}</td>
+    <td><button class="btn btn-ghost btn-sm" onclick="copyText('${BASE}${p}',this)">${icon('copy',13)}</button></td>
+  </tr>`).join('');
+
+  document.getElementById('content').innerHTML = `
+    <div class="cols-12">
+      <div class="span-4">
+        <div class="card card-pad mb-20" style="position:sticky;top:96px">
+          <div class="card-head"><span class="cell-ico ic-blue">${icon('zap',18)}</span><h3>快速接入</h3></div>
+          <div class="col gap-12 mb-16">
+            <a href="#heartbeat" class="card hoverable" style="padding:14px 16px;text-decoration:none;color:inherit;display:block"><div class="row"><span class="cell-ico ic-green">${icon('activity',16)}</span><div><div style="font-weight:600">心跳上报</div><div class="text-muted mono" style="font-size:12px">POST /heartbeat</div></div></div></a>
+            <a href="#progress" class="card hoverable" style="padding:14px 16px;text-decoration:none;color:inherit;display:block"><div class="row"><span class="cell-ico ic-blue">${icon('trendUp',16)}</span><div><div style="font-weight:600">进度上报</div><div class="text-muted mono" style="font-size:12px">POST /progress</div></div></div></a>
+          </div>
+          <hr class="divider">
+          <div class="kv mb-12"><span class="k">Base URL</span><span class="v mono" style="font-size:14px">${BASE}</span></div>
+          <label style="font-size:13px;color:var(--text-muted);margin-bottom:8px;display:block">接入令牌</label>
+          <div class="row gap-8"><div class="search" style="flex:1;min-width:0"><span>${icon('key',15)}</span><input class="mono" readonly value="${TOKEN}" style="font-size:12px"></div><button class="btn btn-ghost btn-icon" onclick="copyText('${TOKEN}',this)">${icon('copy',16)}</button></div>
+        </div>
+      </div>
+      <div class="span-8">
+        <div id="heartbeat" style="margin-bottom:20px">${snippetCard(SNIPPETS.heartbeat)}</div>
+        <div id="progress" style="margin-bottom:20px">${snippetCard(SNIPPETS.progress)}</div>
+        <div class="card card-pad">
+          <div class="card-head"><span class="cell-ico ic-purple">${icon('code',18)}</span><h3>全部 Endpoint</h3></div>
+          <div class="table-wrap"><table class="tbl"><thead><tr><th>方法</th><th>路径</th><th>说明</th><th></th></tr></thead><tbody>${epRows}</tbody></table></div>
+        </div>
+      </div>
+    </div>`;
+}
+render();
+</script>
+</body>
+</html>

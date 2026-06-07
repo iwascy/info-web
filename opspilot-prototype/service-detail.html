@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>服务详情 · OpsPilot</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<script src="assets/icons.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/app.js"></script>
+<script>
+const key = new URLSearchParams(location.search).get('key') || 'order-sync';
+const s = getById(DB.services, 'service_key', key) || DB.services[0];
+
+renderShell({ active:'services', title:s.name, subtitle:`${s.service_key} · ${TYPE_LABEL[s.type]} 服务` });
+
+function render() {
+  const tone = statusTone(s.status);
+  const events = DB.events.filter(e => e.service_key===key);
+  const task = getById(DB.sync_tasks,'service_key',key);
+
+  // heartbeat strip
+  const hb = (s.heartbeat_series||[]).map(v => `<div title="${v?'正常':'丢失'}" style="flex:1;height:34px;border-radius:3px;background:${v?'linear-gradient(180deg,#29d684,#1fa968)':'rgba(255,91,111,0.5)'}"></div>`).join('');
+
+  const evList = events.length ? events.map(e => `
+    <div class="tl-item ${e.status}">
+      <div class="tl-dot"></div>
+      <div class="tl-head"><span class="tl-msg">${e.message}</span>${badge(e.status, statusLabel(e.status))}</div>
+      <div class="tl-time">${e.type} · ${fmtTime(e.created_at)} · ${fmtRelative(e.created_at)}</div>
+      <div class="codeblock mt-8" style="font-size:12px">${syntaxJson(e.raw_payload)}</div>
+    </div>`).join('') : `<div class="empty">${icon('list',54)}<h4>暂无事件</h4></div>`;
+
+  document.getElementById('content').innerHTML = `
+    <a href="services.html" class="btn btn-ghost btn-sm mb-20">${icon('arrowRight',14)} 返回服务列表</a>
+
+    <div class="card ${s.status==='error'?'card-error':''} card-pad mb-20">
+      <div class="row gap-16">
+        <span class="cell-ico ic-${tone==='running'?'blue':tone}" style="width:56px;height:56px;border-radius:14px">${icon(TYPE_ICON[s.type],26)}</span>
+        <div style="flex:1">
+          <div class="row gap-12"><h2 style="font-size:24px;font-weight:700">${s.name}</h2>${badge(s.status)}${typeTag(s.type)}</div>
+          <div class="text-muted mono mt-8">${s.service_key}</div>
+        </div>
+        <div class="row gap-8">
+          <button class="btn btn-ghost">${icon('pause',16)} 暂停</button>
+          <button class="btn btn-danger" onclick="confirmDialog({title:'删除服务',body:'确认删除「${s.name}」？',warn:'历史数据将无法恢复。',confirmText:'删除',onConfirm:()=>{toast('已删除','check');setTimeout(()=>location.href='services.html',600)}})">${icon('trash',16)} 删除</button>
+        </div>
+      </div>
+      ${s.message ? `<div class="mt-16 ${s.status==='error'?'modal-warn':''}" style="${s.status!=='error'?'color:var(--text-muted)':''}">${s.status==='error'?'⚠ ':''}${s.message}</div>` : ''}
+    </div>
+
+    <div class="cols-12 mb-20">
+      <div class="span-3 card card-pad hoverable"><div class="kv"><span class="k">最近心跳</span><span class="v">${fmtRelative(s.last_heartbeat_at)}</span></div><div class="text-dim mt-8" style="font-size:12px">${s.last_heartbeat_at?fmtTime(s.last_heartbeat_at):'—'}</div></div>
+      <div class="span-3 card card-pad hoverable"><div class="kv"><span class="k">运行时长</span><span class="v t-green">${s.uptime}</span></div><div class="text-dim mt-8" style="font-size:12px">自上次重启</div></div>
+      <div class="span-3 card card-pad hoverable"><div class="kv"><span class="k">当前进度</span><span class="v t-${tone}">${s.progress!=null?s.progress+'%':'—'}</span></div>${s.progress!=null?`<div class="mt-8">${progressBar(s.progress,tone)}</div>`:'<div class="text-dim mt-8" style="font-size:12px">无进度上报</div>'}</div>
+      <div class="span-3 card card-pad hoverable"><div class="kv"><span class="k">${s.qps?'QPS':'最近上报'}</span><span class="v t-cyan">${s.qps?s.qps:fmtRelative(s.last_progress_at)}</span></div><div class="text-dim mt-8" style="font-size:12px">${s.qps?'每秒请求数':'最近进度时间'}</div></div>
+    </div>
+
+    <div class="cols-12">
+      <div class="span-7">
+        <div class="card card-pad hoverable mb-20">
+          <div class="card-head"><h3>心跳时间线</h3><span class="sub">最近 13 次上报</span></div>
+          <div class="row gap-8" style="align-items:stretch">${hb}</div>
+          <div class="row mt-12" style="justify-content:space-between;font-size:12px"><span class="text-muted">较早</span><span class="text-muted">现在</span></div>
+        </div>
+        ${task ? `<div class="card card-pad hoverable">
+          <div class="card-head"><h3>关联同步任务</h3><span class="spacer"></span><a href="sync-detail.html?id=${task.task_id}" class="btn btn-ghost btn-sm">查看 ${icon('arrowRight',14)}</a></div>
+          <div class="row mb-12"><span style="font-weight:600">${task.task_name}</span><span class="spacer"></span>${badge(task.status)}</div>
+          <div class="progress-row mb-16">${progressBar(task.progress, statusTone(task.status))}<span class="pct">${task.progress}%</span></div>
+          <div class="stat-grid">
+            <div class="stat-box"><div class="k">已处理</div><div class="v">${fmtCompact(task.processed)}</div></div>
+            <div class="stat-box"><div class="k">成功</div><div class="v t-green">${fmtCompact(task.success)}</div></div>
+            <div class="stat-box"><div class="k">失败</div><div class="v t-red">${fmtCompact(task.failed)}</div></div>
+          </div>
+        </div>` : ''}
+      </div>
+      <div class="span-5 card card-pad hoverable">
+        <div class="card-head"><h3>事件历史</h3><span class="spacer"></span><a href="logs.html" class="btn btn-ghost btn-sm">全部日志</a></div>
+        <div class="timeline">${evList}</div>
+      </div>
+    </div>`;
+}
+
+function syntaxJson(obj){
+  const json = JSON.stringify(obj, null, 2);
+  return json.replace(/("(\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?)/g, m => {
+    let cls = 'str';
+    if (/:$/.test(m)) cls='key';
+    else if (/true|false|null/.test(m)) cls='cmd';
+    else if (/^-?\d/.test(m)) cls='url';
+    return `<span class="${cls}">${m}</span>`;
+  });
+}
+window.onRefresh = render;
+render();
+</script>
+</body>
+</html>

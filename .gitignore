@@ -1,0 +1,11 @@
+.next/
+node_modules/
+data/
+server/data/
+server/opspilot-server
+web/.next/
+web/node_modules/
+*.log
+.DS_Store
+tsconfig.tsbuildinfo
+web/tsconfig.tsbuildinfo
