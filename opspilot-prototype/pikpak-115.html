@@ -50,7 +50,7 @@ const MIG = {
   total_files:50480, success_files:37965, instant_files:24130, uploaded_files:13835,
   failed_files:249, queue_size:12017,
   total_bytes:6597069766656, done_bytes:4810363371520,    // ~6 TB / ~4.37 TB
-  current_file:'剧集/SomeShow.S07/E12.2160p.HDR.DV.mkv', current_size:18.4*GB,
+  current_file:'文件名已隐藏', current_size:18.4*GB,
   current_stage:'upload', current_pct:73,
   download_speed:41*MB, upload_speed:28*MB,
   dl_series:[36,38,34,40,42,39,44,41,37,45,43,40,38,42,41,39,43,41,44,40,38,41],
@@ -65,22 +65,22 @@ const MIG = {
     { key:'done',     name:'完成',        icon:'checkCircle', status:'pending', meta:'—' },
   ],
   recent:[
-    { name:'E12.2160p.HDR.DV.mkv',     size:18.4*GB, path:'upload',   dl:41*MB, ul:28*MB, status:'running', dur:'01:12' },
-    { name:'E11.2160p.HDR.mkv',        size:16.1*GB, path:'instant',  dl:0,     ul:0,     status:'success', dur:'00:02' },
-    { name:'E10.1080p.x265.mkv',       size:4.2*GB,  path:'instant',  dl:0,     ul:0,     status:'success', dur:'00:01' },
-    { name:'番外.Bonus.2160p.mkv',      size:9.8*GB,  path:'download', dl:38*MB, ul:26*MB, status:'success', dur:'06:48' },
-    { name:'E09.1080p.mkv',            size:3.9*GB,  path:'instant',  dl:0,     ul:0,     status:'success', dur:'00:01' },
-    { name:'OST.flac.zip',             size:612*MB,  path:'download', dl:33*MB, ul:24*MB, status:'failed',  dur:'—' },
-    { name:'E08.2160p.HDR.mkv',        size:15.5*GB, path:'upload',   dl:40*MB, ul:27*MB, status:'success', dur:'09:31' },
+    { name:'文件名已隐藏',              size:18.4*GB, path:'upload',   dl:41*MB, ul:28*MB, status:'running', dur:'01:12' },
+    { name:'文件名已隐藏',              size:16.1*GB, path:'instant',  dl:0,     ul:0,     status:'success', dur:'00:02' },
+    { name:'文件名已隐藏',              size:4.2*GB,  path:'instant',  dl:0,     ul:0,     status:'success', dur:'00:01' },
+    { name:'文件名已隐藏',              size:9.8*GB,  path:'download', dl:38*MB, ul:26*MB, status:'success', dur:'06:48' },
+    { name:'文件名已隐藏',              size:3.9*GB,  path:'instant',  dl:0,     ul:0,     status:'success', dur:'00:01' },
+    { name:'文件名已隐藏',              size:612*MB,  path:'download', dl:33*MB, ul:24*MB, status:'failed',  dur:'—' },
+    { name:'文件名已隐藏',              size:15.5*GB, path:'upload',   dl:40*MB, ul:27*MB, status:'success', dur:'09:31' },
   ],
   errors:[
-    { file:'OST.flac.zip', code:'rate_limited', reason:'115 上传限流（HTTP 429），已自动暂停并重排队', level:'warning', time:'2026-06-07T21:38:12+08:00',
+    { file:'文件名已隐藏', code:'rate_limited', reason:'115 上传限流（HTTP 429），已自动暂停并重排队', level:'warning', time:'2026-06-07T21:38:12+08:00',
       payload:{ stage:'upload', http_status:429, retry_after:120, action:'pause_and_requeue' } },
-    { file:'E05.REMUX.mkv', code:'quota_exceeded', reason:'115 网盘配额不足，跳过该文件', level:'error', time:'2026-06-07T20:11:40+08:00',
+    { file:'文件名已隐藏', code:'quota_exceeded', reason:'115 网盘配额不足，跳过该文件', level:'error', time:'2026-06-07T20:11:40+08:00',
       payload:{ stage:'upload', need_bytes:48956231680, quota_left_bytes:12000000000 } },
-    { file:'oldpack.rar', code:'source_gone', reason:'PikPak 源文件已失效（404），无法下载', level:'error', time:'2026-06-07T18:52:03+08:00',
+    { file:'文件名已隐藏', code:'source_gone', reason:'PikPak 源文件已失效（404），无法下载', level:'error', time:'2026-06-07T18:52:03+08:00',
       payload:{ stage:'download', http_status:404, file_id:'pp_8f3a91c2' } },
-    { file:'E04.1080p.mkv', code:'instant_miss', reason:'115 秒传未命中，已回退为下载+上传', level:'info', time:'2026-06-07T17:30:55+08:00',
+    { file:'文件名已隐藏', code:'instant_miss', reason:'115 秒传未命中，已回退为下载+上传', level:'info', time:'2026-06-07T17:30:55+08:00',
       payload:{ stage:'upload', sha1_matched:false, fallback:'download_upload' } },
   ],
 };
@@ -204,7 +204,7 @@ function render(){
     <div class="text-dim" style="font-size:11.5px;text-align:right;margin-top:6px">单位 MB/s · 最近 22 个采样点 · 上传是当前瓶颈侧</div>
   </div>`;
 
-  /* 最近文件 */
+  /* 最近迁移对象 */
   const PATH_LBL={instant:'115 秒传',relay:'API 中转',upload:'下载+上传',download:'下载+上传'};
   const PATH_CLS={instant:'path-instant',relay:'path-relay',upload:'path-download',download:'path-download'};
   const recRows=m.recent.map(r=>`<tr class="${r.status==='failed'?'row-error':''}">
@@ -217,8 +217,8 @@ function render(){
     <td class="mono text-muted nowrap">${r.dur}</td>
   </tr>`).join('');
   const recCard=`<div class="card card-pad mb-20">
-    <div class="card-head"><span class="cell-ico ic-green">${icon('list',18)}</span><h3>最近迁移文件</h3><span class="sub">秒传 / 中转 / 下载上传 三种路径</span></div>
-    <div class="table-wrap"><table class="tbl"><thead><tr><th>文件</th><th>大小</th><th>路径</th><th>下载</th><th>上传</th><th>状态</th><th>耗时</th></tr></thead><tbody>${recRows}</tbody></table></div>
+    <div class="card-head"><span class="cell-ico ic-green">${icon('list',18)}</span><h3>最近迁移对象</h3><span class="sub">秒传 / 中转 / 下载上传 三种路径</span></div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>对象</th><th>大小</th><th>路径</th><th>下载</th><th>上传</th><th>状态</th><th>耗时</th></tr></thead><tbody>${recRows}</tbody></table></div>
   </div>`;
 
   /* 错误样本 */
@@ -226,7 +226,7 @@ function render(){
     <div class="tl-item ${e.level==='error'?'error':e.level==='warning'?'running':'success'}">
       <div class="tl-dot"></div>
       <div class="tl-head"><span class="tl-msg">${e.reason}</span><span class="tag mono" style="background:rgba(255,91,111,.12);color:var(--red);font-size:11px">${e.code}</span></div>
-      <div class="tl-time"><span class="mono">${e.file}</span> · ${fmtTime(e.time)} · ${fmtRelative(e.time)}</div>
+      <div class="tl-time">${fmtTime(e.time)} · ${fmtRelative(e.time)}</div>
       <details class="mt-8"><summary style="cursor:pointer;color:var(--text-muted);font-size:12.5px">原始 payload</summary>
         <div class="codeblock mt-8" style="font-size:12px">${syntaxJson(e.payload)}</div></details>
     </div>`).join('');

@@ -22,6 +22,7 @@ import (
 )
 
 const defaultToken = "opspilot-dev-token"
+const hiddenFileName = "文件名已隐藏"
 
 type App struct {
 	db    *sql.DB
@@ -751,6 +752,7 @@ func (a *App) listTasks(detail bool) ([]SyncTask, error) {
 		if detail {
 			a.fillTaskDetail(&t)
 		}
+		redactTaskFileNames(&t)
 		out = append(out, t)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -772,6 +774,7 @@ func (a *App) taskByID(id string, detail bool) (SyncTask, error) {
 	if detail {
 		a.fillTaskDetail(&t)
 	}
+	redactTaskFileNames(&t)
 	return t, nil
 }
 
@@ -787,6 +790,7 @@ func (a *App) tasksByService(key string) ([]SyncTask, error) {
 		if err != nil {
 			return nil, err
 		}
+		redactTaskFileNames(&t)
 		out = append(out, t)
 	}
 	return out, nil
@@ -994,9 +998,91 @@ func (a *App) listEvents(field, value, typ string, limit int) ([]Event, error) {
 			return nil, err
 		}
 		e.RawPayload = json.RawMessage(raw)
+		redactEventFileNames(&e)
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+func redactTaskFileNames(t *SyncTask) {
+	if !isPikpak115Task(t.ServiceKey, t.TaskID) {
+		return
+	}
+	if t.CurrentFile != nil {
+		t.CurrentFile = strPtr(hiddenFileName)
+	}
+	for i := range t.ErrorSamples {
+		t.ErrorSamples[i].File = hiddenFileName
+		t.ErrorSamples[i].Payload = redactRawPayload(t.ErrorSamples[i].Payload)
+	}
+	for i := range t.RecentFiles {
+		t.RecentFiles[i].Name = hiddenFileName
+	}
+}
+
+func redactEventFileNames(e *Event) {
+	if !isPikpak115Event(e.ServiceKey, e.TaskID) {
+		return
+	}
+	if e.FileName != nil {
+		e.FileName = strPtr(hiddenFileName)
+	}
+	e.RawPayload = redactRawPayload(e.RawPayload)
+}
+
+func redactRawPayload(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return raw
+	}
+	redactPayloadValue(v)
+	out, err := json.Marshal(v)
+	if err != nil {
+		return raw
+	}
+	return json.RawMessage(out)
+}
+
+func redactPayloadValue(v any) {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, child := range x {
+			if isFileNameKey(k) {
+				x[k] = hiddenFileName
+				continue
+			}
+			redactPayloadValue(child)
+		}
+	case []any:
+		for _, child := range x {
+			redactPayloadValue(child)
+		}
+	}
+}
+
+func isFileNameKey(k string) bool {
+	switch strings.ToLower(k) {
+	case "current_file", "file_name", "filename", "file":
+		return true
+	default:
+		return false
+	}
+}
+
+func isPikpak115Task(serviceKey, taskID string) bool {
+	text := strings.ToLower(serviceKey + " " + taskID)
+	return strings.Contains(text, "pikpak") && strings.Contains(text, "115")
+}
+
+func isPikpak115Event(serviceKey string, taskID *string) bool {
+	task := ""
+	if taskID != nil {
+		task = *taskID
+	}
+	return isPikpak115Task(serviceKey, task)
 }
 
 func (a *App) ensureService(serviceKey, name, typ string) error {
