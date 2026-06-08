@@ -17,7 +17,7 @@ export default function ApiDocsPage() {
   const progress = `curl -X POST ${API_BASE}/api/progress \\
   -H "Authorization: Bearer ${token}" \\
   -H "Content-Type: application/json" \\
-  -d '{"service_key":"pikpak-115-sg2","task_id":"pikpak_115_main","name":"PikPak → 115 网盘迁移","stage":"upload","total":50480,"processed":37965,"success":37965,"failed":249,"progress":75.2,"total_bytes":6597069766656,"done_bytes":4810363371520,"instant_files":24130,"uploaded_files":13835,"queue_size":12017,"cursor":"1184273","download_speed":42991616,"upload_speed":29360128,"current_file":"E12.2160p.mkv","current_stage":"upload"}'`;
+  -d '{"service_key":"pikpak-115-sg2","task_id":"pikpak_115_main","name":"PikPak → 115 网盘迁移","stage":"upload","total":50480,"processed":37965,"success":37965,"failed":249,"progress":75.2,"total_bytes":6597069766656,"done_bytes":4810363371520,"instant_files":24130,"uploaded_files":13835,"queue_size":12017,"cursor":"1184273","download_speed":42991616,"upload_speed":29360128,"current_file":"文件名已隐藏","current_stage":"upload"}'`;
   const endpoints = ["POST /api/heartbeat", "POST /api/progress", "GET /api/dashboard", "GET /api/services", "POST /api/services", "GET /api/services/{key}", "DELETE /api/services/{key}", "GET /api/sync-tasks", "GET /api/sync-tasks/{id}", "POST /api/sync-tasks/{id}/pause", "POST /api/sync-tasks/{id}/resume", "GET /api/alerts", "POST /api/alerts/resolve-all", "POST /api/alerts/{id}/resolve", "POST /api/alerts/{id}/mute", "GET /api/events?type=&q=&limit=", "GET /api/settings", "PUT /api/settings", "POST /api/token/reset"];
   const aiPrompt = useMemo(() => buildAiPrompt(API_BASE, token), [token]);
 
@@ -93,7 +93,7 @@ Body:
   "skipped": 8,
   "progress": 42.0,
   "message": "正在处理",
-  "file_name": "当前文件名（可选）",
+  "file_name": "文件名已隐藏（可选）",
   "download_speed": 10485760,
   "upload_speed": 8388608
 }
@@ -106,7 +106,7 @@ Body:
   "uploaded_files": 13835,
   "queue_size": 12017,
   "cursor": "断点游标或 last message id",
-  "current_file": "剧集/SomeShow.S07/E12.2160p.HDR.DV.mkv",
+  "current_file": "文件名已隐藏",
   "current_stage": "scan|download|upload|verify|done",
   "window_start": "02:00",
   "window_end": "08:00",
