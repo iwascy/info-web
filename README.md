@@ -20,6 +20,8 @@ API_PORT=8080 WEB_PORT=3000 ./dev.sh
 
 ```bash
 cd /Users/hcy/code/info-web/server
+cp ../config/auth.example.json ../config/auth.json
+# 修改 ../config/auth.json 中的 username/password
 go mod tidy
 go run .
 ```
@@ -32,7 +34,16 @@ NEXT_PUBLIC_API_BASE=http://localhost:8080 npm run dev
 
 打开 `http://localhost:3000`。
 
-首次启动时后端会生成真实访问令牌并打印在 API 日志里。也可以通过 `OPSPILOT_TOKEN` 显式指定。前端登录页使用同一个令牌进入面板，上报接口也使用该令牌作为 `Authorization: Bearer`。
+后端启动时会读取登录配置文件，默认路径为 `config/auth.json`，也可以通过 `OPSPILOT_AUTH_CONFIG` 指定：
+
+```json
+{
+  "username": "opspilot",
+  "password": "change-me"
+}
+```
+
+前端登录页使用配置文件中的账号密码登录。登录成功后，后端会返回面板会话令牌给浏览器保存，用于调用受保护的面板 API。首次启动时后端会生成真实接入令牌并打印在 API 日志里，也可以通过 `OPSPILOT_TOKEN` 显式指定；被监控服务上报接口仍使用该接入令牌作为 `Authorization: Bearer`。
 
 ## 目录
 
@@ -50,12 +61,14 @@ NEXT_PUBLIC_API_BASE=http://localhost:8080 npm run dev
 - API systemd：`opspilot-api.service`
 - Web systemd：`opspilot-web.service`
 - Nginx 配置：`/etc/nginx/sites-available/web-info.cccy.fun`
+- 登录配置：`/etc/opspilot-auth.json`
 - 证书：Let's Encrypt，certbot 自动续期
 
-远端查看密钥：
+远端查看密钥与登录配置：
 
 ```bash
 ssh root@161.118.203.175 'cat /root/opspilot-secrets.txt'
+ssh root@161.118.203.175 'cat /etc/opspilot-auth.json'
 ```
 
 远端常用操作：

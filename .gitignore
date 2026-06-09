@@ -1,6 +1,7 @@
 .next/
 node_modules/
 data/
+config/auth.json
 server/data/
 server/opspilot-server
 web/.next/

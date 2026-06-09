@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -26,8 +27,14 @@ import (
 const hiddenFileName = "文件名已隐藏"
 
 type App struct {
-	db    *sql.DB
-	token string
+	db       *sql.DB
+	token    string
+	authConf AuthConfig
+}
+
+type AuthConfig struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 type Service struct {
@@ -179,7 +186,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	app := &App{db: db, token: os.Getenv("OPSPILOT_TOKEN")}
+	authConf, err := loadAuthConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+	app := &App{db: db, token: os.Getenv("OPSPILOT_TOKEN"), authConf: authConf}
 	if err := app.migrate(); err != nil {
 		log.Fatal(err)
 	}
@@ -197,26 +208,26 @@ func main() {
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/healthz", app.ok)
 		r.Post("/auth/login", app.login)
-		r.With(app.auth).Get("/auth/me", app.me)
-		r.With(app.auth).Post("/heartbeat", app.postHeartbeat)
-		r.With(app.auth).Post("/progress", app.postProgress)
-		r.Get("/dashboard", app.getDashboard)
-		r.Get("/services", app.getServices)
-		r.With(app.auth).Post("/services", app.createService)
-		r.Get("/services/{key}", app.getService)
-		r.With(app.auth).Delete("/services/{key}", app.deleteService)
-		r.Get("/sync-tasks", app.getSyncTasks)
-		r.Get("/sync-tasks/{id}", app.getSyncTask)
-		r.With(app.auth).Post("/sync-tasks/{id}/pause", app.pauseTask)
-		r.With(app.auth).Post("/sync-tasks/{id}/resume", app.resumeTask)
-		r.Get("/alerts", app.getAlerts)
-		r.With(app.auth).Post("/alerts/resolve-all", app.resolveAllAlerts)
-		r.With(app.auth).Post("/alerts/{id}/resolve", app.resolveAlert)
-		r.With(app.auth).Post("/alerts/{id}/mute", app.muteAlert)
-		r.Get("/events", app.getEvents)
-		r.With(app.auth).Get("/settings", app.getSettings)
-		r.With(app.auth).Put("/settings", app.putSettings)
-		r.With(app.auth).Post("/token/reset", app.resetToken)
+		r.With(app.panelAuth).Get("/auth/me", app.me)
+		r.With(app.ingestAuth).Post("/heartbeat", app.postHeartbeat)
+		r.With(app.ingestAuth).Post("/progress", app.postProgress)
+		r.With(app.panelAuth).Get("/dashboard", app.getDashboard)
+		r.With(app.panelAuth).Get("/services", app.getServices)
+		r.With(app.panelAuth).Post("/services", app.createService)
+		r.With(app.panelAuth).Get("/services/{key}", app.getService)
+		r.With(app.panelAuth).Delete("/services/{key}", app.deleteService)
+		r.With(app.panelAuth).Get("/sync-tasks", app.getSyncTasks)
+		r.With(app.panelAuth).Get("/sync-tasks/{id}", app.getSyncTask)
+		r.With(app.panelAuth).Post("/sync-tasks/{id}/pause", app.pauseTask)
+		r.With(app.panelAuth).Post("/sync-tasks/{id}/resume", app.resumeTask)
+		r.With(app.panelAuth).Get("/alerts", app.getAlerts)
+		r.With(app.panelAuth).Post("/alerts/resolve-all", app.resolveAllAlerts)
+		r.With(app.panelAuth).Post("/alerts/{id}/resolve", app.resolveAlert)
+		r.With(app.panelAuth).Post("/alerts/{id}/mute", app.muteAlert)
+		r.With(app.panelAuth).Get("/events", app.getEvents)
+		r.With(app.panelAuth).Get("/settings", app.getSettings)
+		r.With(app.panelAuth).Put("/settings", app.putSettings)
+		r.With(app.panelAuth).Post("/token/reset", app.resetToken)
 	})
 
 	addr := env("OPSPILOT_ADDR", ":8080")
@@ -229,6 +240,39 @@ func env(k, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func loadAuthConfig() (AuthConfig, error) {
+	paths := []string{os.Getenv("OPSPILOT_AUTH_CONFIG")}
+	if paths[0] == "" {
+		paths = []string{"config/auth.json", "../config/auth.json"}
+	}
+	var f *os.File
+	var path string
+	var err error
+	for _, candidate := range paths {
+		if candidate == "" {
+			continue
+		}
+		path = candidate
+		f, err = os.Open(candidate)
+		if err == nil {
+			break
+		}
+	}
+	if f == nil {
+		return AuthConfig{}, fmt.Errorf("load auth config %s: %w", strings.Join(paths, " or "), err)
+	}
+	defer f.Close()
+	var conf AuthConfig
+	if err := json.NewDecoder(f).Decode(&conf); err != nil {
+		return AuthConfig{}, fmt.Errorf("decode auth config %s: %w", path, err)
+	}
+	conf.Username = strings.TrimSpace(conf.Username)
+	if conf.Username == "" || conf.Password == "" {
+		return AuthConfig{}, fmt.Errorf("auth config %s must include username and password", path)
+	}
+	return conf, nil
 }
 
 func generateToken() string {
@@ -353,11 +397,12 @@ CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status, triggered_at DESC
 	}
 	_, _ = a.db.Exec("ALTER TABLE recent_files ADD COLUMN download_speed INTEGER")
 	_, _ = a.db.Exec("ALTER TABLE recent_files ADD COLUMN upload_speed INTEGER")
-	token := a.token
-	if token == "" {
-		token = generateToken()
+	ingestToken := a.token
+	if ingestToken == "" {
+		ingestToken = generateToken()
 	}
-	_, _ = a.db.Exec("INSERT OR IGNORE INTO settings(key,value) VALUES ('token', ?), ('auto_refresh', 'true'), ('alert_progress_stale_min', '10')", token)
+	panelToken := generateToken()
+	_, _ = a.db.Exec("INSERT OR IGNORE INTO settings(key,value) VALUES ('token', ?), ('panel_token', ?), ('auto_refresh', 'true'), ('alert_progress_stale_min', '10')", ingestToken, panelToken)
 	var stored string
 	_ = a.db.QueryRow("SELECT value FROM settings WHERE key='token'").Scan(&stored)
 	if stored == "opspilot-dev-token" && os.Getenv("OPSPILOT_TOKEN") == "" {
@@ -371,11 +416,9 @@ CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status, triggered_at DESC
 	return nil
 }
 
-func (a *App) auth(next http.Handler) http.Handler {
+func (a *App) ingestAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		token := a.currentToken()
-		if got == "" || got != token {
+		if bearerToken(r) != a.currentToken() {
 			writeErr(w, http.StatusUnauthorized, "invalid bearer token")
 			return
 		}
@@ -383,29 +426,59 @@ func (a *App) auth(next http.Handler) http.Handler {
 	})
 }
 
+func (a *App) panelAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if bearerToken(r) != a.currentPanelToken() {
+			writeErr(w, http.StatusUnauthorized, "invalid session token")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func bearerToken(r *http.Request) string {
+	return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+}
+
 func (a *App) ok(w http.ResponseWriter, r *http.Request) { writeJSON(w, map[string]any{"ok": true}) }
 
 func (a *App) currentToken() string {
+	return a.currentSetting("token", a.token)
+}
+
+func (a *App) currentPanelToken() string {
+	return a.currentSetting("panel_token", "")
+}
+
+func (a *App) currentSetting(key, fallback string) string {
 	var token string
-	_ = a.db.QueryRow("SELECT value FROM settings WHERE key='token'").Scan(&token)
+	_ = a.db.QueryRow("SELECT value FROM settings WHERE key=?", key).Scan(&token)
 	if token == "" {
-		token = a.token
+		token = fallback
 	}
 	return token
 }
 
 func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	var p struct {
-		Token string `json:"token"`
+		Username string `json:"username"`
+		Password string `json:"password"`
 	}
 	if !decode(w, r, &p) {
 		return
 	}
-	if strings.TrimSpace(p.Token) == "" || strings.TrimSpace(p.Token) != a.currentToken() {
-		writeErr(w, http.StatusUnauthorized, "invalid token")
+	if !a.validLogin(p.Username, p.Password) {
+		writeErr(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "token": p.Token})
+	writeJSON(w, map[string]any{"ok": true, "token": a.currentPanelToken()})
+}
+
+func (a *App) validLogin(username, password string) bool {
+	username = strings.TrimSpace(username)
+	userOK := subtle.ConstantTimeCompare([]byte(username), []byte(a.authConf.Username)) == 1
+	passOK := subtle.ConstantTimeCompare([]byte(password), []byte(a.authConf.Password)) == 1
+	return userOK && passOK
 }
 
 func (a *App) me(w http.ResponseWriter, r *http.Request) {
@@ -764,6 +837,9 @@ func (a *App) getSettings(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var k, v string
 		_ = rows.Scan(&k, &v)
+		if k == "panel_token" {
+			continue
+		}
 		out[k] = v
 	}
 	writeJSON(w, out)

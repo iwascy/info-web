@@ -9,7 +9,7 @@ import { API_BASE, fetcher } from "@/lib/api";
 export default function ApiDocsPage() {
   const { data } = useSWR<Record<string, string>>("/api/settings", fetcher);
   const [copied, setCopied] = useState(false);
-  const token = data?.token || process.env.NEXT_PUBLIC_INGEST_TOKEN || "<登录后从设置读取>";
+  const token = data?.token || "<登录后从设置读取>";
   const heartbeat = `curl -X POST ${API_BASE}/api/heartbeat \\
   -H "Authorization: Bearer ${token}" \\
   -H "Content-Type: application/json" \\
@@ -42,7 +42,7 @@ export default function ApiDocsPage() {
         <pre className="codeblock json-pre">{aiPrompt}</pre>
       </div>
       <div className="cols-12"><div className="span-6 card card-pad"><div className="card-head"><h3>心跳上报</h3></div><pre className="codeblock">{heartbeat}</pre></div><div className="span-6 card card-pad"><div className="card-head"><h3>进度上报</h3></div><pre className="codeblock">{progress}</pre></div></div>
-      <div className="card card-pad mt-20"><div className="card-head"><h3>Endpoints</h3></div><div className="table-wrap"><table className="tbl"><thead><tr><th>接口</th><th>说明</th></tr></thead><tbody>{endpoints.map((e) => <tr key={e}><td className="mono">{e}</td><td className="text-muted">{e.startsWith("POST") || e.startsWith("PUT") || e.startsWith("DELETE") ? "写入 / 动作（需 Bearer）" : "查询"}</td></tr>)}</tbody></table></div></div>
+      <div className="card card-pad mt-20"><div className="card-head"><h3>Endpoints</h3></div><div className="table-wrap"><table className="tbl"><thead><tr><th>接口</th><th>说明</th></tr></thead><tbody>{endpoints.map((e) => <tr key={e}><td className="mono">{e}</td><td className="text-muted">{e.startsWith("POST") || e.startsWith("PUT") || e.startsWith("DELETE") ? "写入 / 动作（需 Bearer）" : "查询（需 Bearer）"}</td></tr>)}</tbody></table></div></div>
     </Shell>
   );
 }

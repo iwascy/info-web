@@ -15,6 +15,7 @@ Starts OpsPilot API and web dev server together.
 Environment:
   API_PORT              Go API port (default: 8080)
   WEB_PORT              Next.js port (default: 3000)
+  OPSPILOT_AUTH_CONFIG  Login config JSON path (default: config/auth.json)
   OPSPILOT_TOKEN        API bearer token (default handled by server)
   NEXT_PUBLIC_API_BASE  Frontend API URL (default: http://localhost:\$API_PORT)
 EOF
@@ -49,6 +50,13 @@ if [[ ! -d "$ROOT_DIR/web/node_modules" ]]; then
   (cd "$ROOT_DIR/web" && npm install)
 fi
 
+AUTH_CONFIG="${OPSPILOT_AUTH_CONFIG:-$ROOT_DIR/config/auth.json}"
+if [[ ! -f "$AUTH_CONFIG" ]]; then
+  echo "Missing login config: $AUTH_CONFIG" >&2
+  echo "Create one with: cp $ROOT_DIR/config/auth.example.json $ROOT_DIR/config/auth.json" >&2
+  exit 1
+fi
+
 pids=()
 
 cleanup() {
@@ -65,7 +73,7 @@ cleanup() {
 trap cleanup INT TERM EXIT
 
 echo "[api] http://localhost:${API_PORT}"
-(cd "$ROOT_DIR/server" && OPSPILOT_ADDR=":${API_PORT}" go run .) &
+(cd "$ROOT_DIR/server" && OPSPILOT_AUTH_CONFIG="$AUTH_CONFIG" OPSPILOT_ADDR=":${API_PORT}" go run .) &
 pids+=("$!")
 
 echo "[web] http://localhost:${WEB_PORT}"

@@ -1,14 +1,23 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Bell, LockKeyhole, LogIn, RadioTower, ShieldCheck } from "lucide-react";
 import { getStoredToken, login } from "@/lib/api";
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<><div className="bg-decor" /><div className="auth-loading">正在加载登录页...</div></>}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const params = useSearchParams();
   const next = params.get("next") || "/dashboard";
-  const [token, setToken] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -23,10 +32,10 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      await login(token.trim());
+      await login(username.trim(), password);
       window.location.replace(next);
     } catch {
-      setError("令牌无效，请使用后端当前 OPSPILOT_TOKEN 或设置页重置后的令牌。");
+      setError("账号或密码无效，请使用服务端登录配置文件中的凭据。");
       setLoading(false);
     }
   }
@@ -55,22 +64,26 @@ export default function LoginPage() {
           <div className="login-card-head">
             <span className="cell-ico ic-blue"><LockKeyhole size={19} /></span>
             <div>
-              <h2>访问令牌</h2>
-              <p>Authorization: Bearer</p>
+              <h2>账号登录</h2>
+              <p>Server config</p>
             </div>
           </div>
           <label className="field">
-            <span>Token</span>
-            <input className="input mono" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoFocus autoComplete="current-password" placeholder="op_..." />
+            <span>账号</span>
+            <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="username" placeholder="opspilot" />
+          </label>
+          <label className="field">
+            <span>密码</span>
+            <input className="input mono" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" placeholder="请输入密码" />
           </label>
           {error ? <div className="modal-warn">{error}</div> : null}
-          <button className="btn btn-primary login-submit" disabled={loading || !token.trim()}>
+          <button className="btn btn-primary login-submit" disabled={loading || !username.trim() || !password}>
             {loading ? <span className="spin"><LogIn size={16} /></span> : <LogIn size={16} />}
             {loading ? "正在登录" : "进入面板"}
           </button>
           <div className="login-note">
             <ShieldCheck size={16} />
-            <span>令牌只保存在当前浏览器本地，用于调用受保护的写入与设置接口。</span>
+            <span>登录成功后会在当前浏览器保存访问令牌，用于调用受保护接口。</span>
           </div>
         </form>
       </main>

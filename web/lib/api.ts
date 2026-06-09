@@ -1,10 +1,9 @@
 "use client";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080";
-const ENV_TOKEN = process.env.NEXT_PUBLIC_INGEST_TOKEN;
 const STORAGE_KEY = "opspilot_token";
 
-let cachedToken: string | null = ENV_TOKEN || null;
+let cachedToken: string | null = null;
 
 export async function fetcher<T>(path: string): Promise<T> {
   const token = getStoredToken();
@@ -78,17 +77,17 @@ export function setAuthToken(token: string) {
 }
 
 export function clearAuthToken() {
-  cachedToken = ENV_TOKEN || null;
+  cachedToken = null;
   if (typeof window !== "undefined") {
     window.localStorage.removeItem(STORAGE_KEY);
   }
 }
 
-export async function login(token: string) {
+export async function login(username: string, password: string) {
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token })
+    body: JSON.stringify({ username, password })
   });
   if (!res.ok) throw new AuthError(await res.text());
   const payload = await res.json();
