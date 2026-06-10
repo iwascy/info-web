@@ -58,7 +58,9 @@ NEXT_PUBLIC_API_BASE=http://localhost:8080 npm run dev
 - Web systemd：`opspilot-web.service`
 - Nginx 配置：`/etc/nginx/sites-available/web-info.cccy.fun`
 - 证书：Let's Encrypt，certbot 自动续期
+- Jenkins 部署任务：`https://jenkins.cccy.fun/job/info-web-prod/`
 - Jenkins 监控：`opspilot-jenkins-heartbeat.timer` 每分钟探测 `https://jenkins.cccy.fun/login` 并上报服务 `jenkins-cccy`
+- Jenkins 远端部署脚本：`/usr/local/bin/info-web-deploy.sh`
 
 远端查看密钥：
 
@@ -75,6 +77,7 @@ journalctl -u opspilot-api -f
 journalctl -u opspilot-web -f
 journalctl -u opspilot-jenkins-heartbeat.service -f
 systemctl restart opspilot-api opspilot-web
+/usr/local/bin/info-web-deploy.sh
 ```
 
 ## 上报示例
