@@ -16,7 +16,7 @@ func TestRedactTaskFileNamesForPikpak115(t *testing.T) {
 	currentFile := "剧集/SomeShow.S07/E12.2160p.HDR.DV.mkv"
 	task := SyncTask{
 		ServiceKey:  "pikpak-115-sg2",
-		TaskID:      "pikpak_115_main",
+		TaskID:      "file_transfer_115",
 		CurrentFile: &currentFile,
 		ErrorSamples: []ErrSam{{
 			File:    "OST.flac.zip",
@@ -42,7 +42,7 @@ func TestRedactTaskFileNamesForPikpak115(t *testing.T) {
 }
 
 func TestRedactEventFileNamesForPikpak115(t *testing.T) {
-	taskID := "pikpak_115_main"
+	taskID := "file_transfer_115"
 	fileName := "E12.2160p.HDR.DV.mkv"
 	event := Event{
 		ServiceKey: "pikpak-115-sg2",

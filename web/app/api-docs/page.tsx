@@ -13,11 +13,11 @@ export default function ApiDocsPage() {
   const heartbeat = `curl -X POST ${API_BASE}/api/heartbeat \\
   -H "Authorization: Bearer ${token}" \\
   -H "Content-Type: application/json" \\
-  -d '{"service_key":"pikpak-115-sg2","status":"running","message":"running"}'`;
+  -d '{"service_key":"your-service-key","name":"服务展示名","type":"worker","status":"running","message":"running"}'`;
   const progress = `curl -X POST ${API_BASE}/api/progress \\
   -H "Authorization: Bearer ${token}" \\
   -H "Content-Type: application/json" \\
-  -d '{"service_key":"pikpak-115-sg2","task_id":"pikpak_115_main","name":"PikPak → 115 网盘迁移","stage":"upload","total":50480,"processed":37965,"success":37965,"failed":249,"progress":75.2,"total_bytes":6597069766656,"done_bytes":4810363371520,"instant_files":24130,"uploaded_files":13835,"queue_size":12017,"cursor":"1184273","download_speed":42991616,"upload_speed":29360128,"current_file":"文件名已隐藏","current_stage":"upload"}'`;
+  -d '{"service_key":"your-service-key","task_id":"stable-task-id","name":"任务展示名","stage":"running","total":1000,"processed":420,"success":410,"failed":2,"progress":42.0}'`;
   const endpoints = ["POST /api/heartbeat", "POST /api/progress", "GET /api/dashboard", "GET /api/services", "POST /api/services", "GET /api/services/{key}", "DELETE /api/services/{key}", "GET /api/sync-tasks", "GET /api/sync-tasks/{id}", "POST /api/sync-tasks/{id}/pause", "POST /api/sync-tasks/{id}/resume", "GET /api/alerts", "POST /api/alerts/resolve-all", "POST /api/alerts/{id}/resolve", "POST /api/alerts/{id}/mute", "GET /api/events?type=&q=&limit=", "GET /api/settings", "PUT /api/settings", "POST /api/token/reset"];
   const aiPrompt = useMemo(() => buildAiPrompt(API_BASE, token), [token]);
 
@@ -98,13 +98,13 @@ Body:
   "upload_speed": 8388608
 }
 
-如果是 PikPak → 115 或类似文件迁移任务，请额外上报这些字段：
+如果是文件迁移或类似任务，请额外上报这些字段：
 {
-  "total_bytes": 6597069766656,
-  "done_bytes": 4810363371520,
-  "instant_files": 24130,
-  "uploaded_files": 13835,
-  "queue_size": 12017,
+  "total_bytes": 1000000000,
+  "done_bytes": 420000000,
+  "instant_files": 120,
+  "uploaded_files": 300,
+  "queue_size": 80,
   "cursor": "断点游标或 last message id",
   "current_file": "文件名已隐藏",
   "current_stage": "scan|download|upload|verify|done",

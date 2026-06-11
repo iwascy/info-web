@@ -86,12 +86,12 @@ systemctl restart opspilot-api opspilot-web
 curl -X POST http://localhost:8080/api/heartbeat \
   -H "Authorization: Bearer <OPSPILOT_TOKEN>" \
   -H "Content-Type: application/json" \
-  -d '{"service_key":"pikpak-115-sg2","status":"running","message":"running"}'
+  -d '{"service_key":"your-service-key","name":"服务展示名","type":"worker","status":"running","message":"running"}'
 ```
 
 ```bash
 curl -X POST http://localhost:8080/api/progress \
   -H "Authorization: Bearer <OPSPILOT_TOKEN>" \
   -H "Content-Type: application/json" \
-  -d '{"service_key":"pikpak-115-sg2","task_id":"pikpak_115_main","name":"PikPak → 115 网盘迁移","stage":"upload","total":50480,"processed":37965,"success":37965,"failed":249,"progress":75.2,"total_bytes":6597069766656,"done_bytes":4810363371520,"instant_files":24130,"uploaded_files":13835,"queue_size":12017,"cursor":"1184273","download_speed":42991616,"upload_speed":29360128,"current_file":"文件名已隐藏","current_stage":"upload"}'
+  -d '{"service_key":"your-service-key","task_id":"stable-task-id","name":"任务展示名","stage":"running","total":1000,"processed":420,"success":410,"failed":2,"progress":42.0}'
 ```

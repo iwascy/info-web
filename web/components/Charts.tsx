@@ -65,6 +65,7 @@ export function LineChart({ series, color = "#3785ff", height = 140 }: { series?
 }
 
 export function DualLine({ a, b }: { a?: number[]; b?: number[] }) {
+  if (!a?.length && !b?.length) return null;
   const s1 = a?.length ? a : [0];
   const s2 = b?.length ? b : [0];
   const all = [...s1, ...s2];
