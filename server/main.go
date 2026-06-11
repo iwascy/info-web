@@ -413,7 +413,45 @@ CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status, triggered_at DESC
 	if os.Getenv("OPSPILOT_TOKEN") == "" {
 		log.Printf("OpsPilot login token: %s", a.token)
 	}
+	a.purgeDemoData()
 	return nil
+}
+
+func (a *App) purgeDemoData() {
+	serviceKeys := []string{
+		"data-cleaner",
+		"deploy-smoke",
+		"deploy-smoke-2",
+		"embedding-agent",
+		"inventory-sync",
+		"order-sync",
+		"pikpak-115-sg2",
+		"product-crawler",
+		"report-generator",
+		"user-api",
+	}
+	taskIDs := []string{
+		"pikpak_115_main",
+		"sync_inventory_001",
+		"sync_order_001",
+		"sync_report_009",
+		"sync_user_001",
+	}
+	for _, key := range serviceKeys {
+		_, _ = a.db.Exec("DELETE FROM alerts WHERE service_key=?", key)
+		_, _ = a.db.Exec("DELETE FROM events WHERE service_key=?", key)
+		_, _ = a.db.Exec("DELETE FROM sync_tasks WHERE service_key=?", key)
+		_, _ = a.db.Exec("DELETE FROM services WHERE service_key=?", key)
+	}
+	for _, taskID := range taskIDs {
+		_, _ = a.db.Exec("DELETE FROM account_health WHERE task_id=?", taskID)
+		_, _ = a.db.Exec("DELETE FROM recent_files WHERE task_id=?", taskID)
+		_, _ = a.db.Exec("DELETE FROM error_samples WHERE task_id=?", taskID)
+		_, _ = a.db.Exec("DELETE FROM batch_records WHERE task_id=?", taskID)
+		_, _ = a.db.Exec("DELETE FROM alerts WHERE task_id=?", taskID)
+		_, _ = a.db.Exec("DELETE FROM events WHERE task_id=?", taskID)
+		_, _ = a.db.Exec("DELETE FROM sync_tasks WHERE task_id=?", taskID)
+	}
 }
 
 func (a *App) ingestAuth(next http.Handler) http.Handler {
