@@ -606,7 +606,7 @@ service_key=excluded.service_key,name=excluded.name,status=excluded.status,stage
 processed=excluded.processed,success=excluded.success,failed=excluded.failed,skipped=excluded.skipped,progress=excluded.progress,
 message=excluded.message,updated_at=excluded.updated_at,total_bytes=excluded.total_bytes,done_bytes=excluded.done_bytes,
 instant_files=excluded.instant_files,uploaded_files=excluded.uploaded_files,queue_size=excluded.queue_size,cursor=excluded.cursor,
-download_speed=excluded.download_speed,upload_speed=excluded.upload_speed,current_file=excluded.current_file,current_stage=excluded.current_stage,
+download_speed=COALESCE(excluded.download_speed,sync_tasks.download_speed),upload_speed=COALESCE(excluded.upload_speed,sync_tasks.upload_speed),current_file=excluded.current_file,current_stage=excluded.current_stage,
 window_start=excluded.window_start,window_end=excluded.window_end,window_enabled=excluded.window_enabled`,
 		serviceKey, taskID, name, normalizeTaskStatus(status), strPtrFrom(p, "stage"), intFrom(p, "total"), intFrom(p, "processed"),
 		intFrom(p, "success"), intFrom(p, "failed"), intFrom(p, "skipped"), progress, strPtrFrom(p, "message"), started, now,

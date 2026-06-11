@@ -201,3 +201,58 @@ func TestProgressPersistsMigrationDetails(t *testing.T) {
 		}
 	}
 }
+
+func TestProgressPreservesLastThroughput(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	app := &App{
+		db:       db,
+		token:    "ingest-token",
+		authConf: AuthConfig{Username: "opspilot", Password: "secret"},
+	}
+	if err := app.migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	withSpeed := `{
+		"service_key":"pikpak-to-115",
+		"task_id":"pikpak-to-115-migration",
+		"name":"PikPak to 115 Migration",
+		"status":"running",
+		"stage":"upload",
+		"download_speed":10485760,
+		"upload_speed":8388608
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/progress", strings.NewReader(withSpeed))
+	res := httptest.NewRecorder()
+	app.postProgress(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected progress 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	withoutSpeed := `{
+		"service_key":"pikpak-to-115",
+		"task_id":"pikpak-to-115-migration",
+		"name":"PikPak to 115 Migration",
+		"status":"running",
+		"stage":"upload",
+		"message":"batch completed"
+	}`
+	req = httptest.NewRequest(http.MethodPost, "/api/progress", strings.NewReader(withoutSpeed))
+	res = httptest.NewRecorder()
+	app.postProgress(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected progress 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	var dl, ul int64
+	if err := db.QueryRow("SELECT download_speed, upload_speed FROM sync_tasks WHERE task_id='pikpak-to-115-migration'").Scan(&dl, &ul); err != nil {
+		t.Fatal(err)
+	}
+	if dl != 10485760 || ul != 8388608 {
+		t.Fatalf("throughput = %d/%d, want 10485760/8388608", dl, ul)
+	}
+}
