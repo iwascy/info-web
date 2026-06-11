@@ -626,6 +626,7 @@ window_start=excluded.window_start,window_end=excluded.window_end,window_enabled
 	}
 	raw, _ := json.Marshal(p)
 	a.addEvent(serviceKey, &taskID, "progress", level, msg, strPtrFrom(p, "stage"), progress, intFrom(p, "processed"), intFrom(p, "total"), strPtrFrom(p, "file_name"), &status, intFrom(p, "download_speed"), intFrom(p, "upload_speed"), raw)
+	a.persistProgressDetails(taskID, p, now)
 	_, _ = a.db.Exec("UPDATE services SET status=?, message=?, last_progress_at=? WHERE service_key=?", deriveServiceFromTask(status), msg, now, serviceKey)
 	if status == "error" {
 		a.ensureAlert(serviceKey, &taskID, "high", val(msg, "同步任务失败"), val(msg, "progress error"))
@@ -1437,6 +1438,74 @@ func strPtrFrom(m map[string]any, k string) *string {
 	return nil
 }
 
+func (a *App) persistProgressDetails(taskID string, p map[string]any, now string) {
+	if files := mapSliceFrom(p, "recent_files"); files != nil {
+		_, _ = a.db.Exec("DELETE FROM recent_files WHERE task_id=?", taskID)
+		for _, f := range files {
+			_, _ = a.db.Exec("INSERT INTO recent_files(task_id,name,size,path,status,download_speed,upload_speed,duration,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+				taskID,
+				strFrom(f, "name", hiddenFileName),
+				intValue(f, "size", 0),
+				strFrom(f, "path", "upload"),
+				strFrom(f, "status", "running"),
+				intFrom(f, "download_speed"),
+				intFrom(f, "upload_speed"),
+				strPtrFrom(f, "duration"),
+				now,
+			)
+		}
+	}
+	if batches := mapSliceFrom(p, "batches"); batches != nil {
+		_, _ = a.db.Exec("DELETE FROM batch_records WHERE task_id=?", taskID)
+		for _, b := range batches {
+			_, _ = a.db.Exec("INSERT INTO batch_records(task_id,range_label,total,success,failed,duration,created_at) VALUES(?,?,?,?,?,?,?)",
+				taskID,
+				strFrom(b, "range", strFrom(b, "range_label", "batch")),
+				intValue(b, "total", 0),
+				intValue(b, "success", 0),
+				intValue(b, "failed", 0),
+				strFrom(b, "duration", "—"),
+				now,
+			)
+		}
+	}
+	if samples := mapSliceFrom(p, "error_samples"); samples != nil {
+		_, _ = a.db.Exec("DELETE FROM error_samples WHERE task_id=?", taskID)
+		for _, e := range samples {
+			payload := e["payload"]
+			if payload == nil {
+				payload = e
+			}
+			raw, _ := json.Marshal(payload)
+			_, _ = a.db.Exec("INSERT INTO error_samples(task_id,file,code,reason,level,payload,created_at) VALUES(?,?,?,?,?,?,?)",
+				taskID,
+				strFrom(e, "file", hiddenFileName),
+				strFrom(e, "code", "error"),
+				strFrom(e, "reason", strFrom(e, "message", "unknown error")),
+				strFrom(e, "level", "error"),
+				string(raw),
+				now,
+			)
+		}
+	}
+	if accounts := mapSliceFrom(p, "accounts"); accounts != nil {
+		_, _ = a.db.Exec("DELETE FROM account_health WHERE task_id=?", taskID)
+		for _, ac := range accounts {
+			_, _ = a.db.Exec("INSERT INTO account_health(task_id,side,label,account,used_bytes,total_bytes,unit,note,ok) VALUES(?,?,?,?,?,?,?,?,?)",
+				taskID,
+				strFrom(ac, "side", "source"),
+				strFrom(ac, "label", "Account"),
+				strFrom(ac, "account", "—"),
+				intValue(ac, "used_bytes", 0),
+				intValue(ac, "total_bytes", 0),
+				strFrom(ac, "unit", "bytes"),
+				strPtrFrom(ac, "note"),
+				boolIntValue(ac, "ok", true),
+			)
+		}
+	}
+}
+
 func strFrom(m map[string]any, k, fallback string) string {
 	if v, ok := m[k].(string); ok && v != "" {
 		return v
@@ -1450,6 +1519,56 @@ func anyStringPtr(m map[string]any, k string) *string {
 		return &s
 	}
 	return nil
+}
+
+func mapSliceFrom(m map[string]any, k string) []map[string]any {
+	raw, ok := m[k]
+	if !ok || raw == nil {
+		return nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if v, ok := item.(map[string]any); ok {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func intValue(m map[string]any, k string, fallback int64) int64 {
+	if v := intFrom(m, k); v != nil {
+		return *v
+	}
+	return fallback
+}
+
+func boolIntValue(m map[string]any, k string, fallback bool) int {
+	raw, ok := m[k]
+	if !ok || raw == nil {
+		if fallback {
+			return 1
+		}
+		return 0
+	}
+	switch v := raw.(type) {
+	case bool:
+		if v {
+			return 1
+		}
+	case float64:
+		if v != 0 {
+			return 1
+		}
+	case string:
+		if v == "true" || v == "1" || v == "yes" || v == "ok" {
+			return 1
+		}
+	}
+	return 0
 }
 
 func intFrom(m map[string]any, k string) *int64 {

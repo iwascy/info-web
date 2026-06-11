@@ -147,3 +147,57 @@ func TestPanelRoutesRejectIngestToken(t *testing.T) {
 		t.Fatalf("expected ingest auth to accept ingest token, got %d", res.Code)
 	}
 }
+
+func TestProgressPersistsMigrationDetails(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	app := &App{
+		db:       db,
+		token:    "ingest-token",
+		authConf: AuthConfig{Username: "opspilot", Password: "secret"},
+	}
+	if err := app.migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{
+		"service_key":"pikpak-to-115",
+		"task_id":"pikpak-to-115-migration",
+		"name":"PikPak to 115 Migration",
+		"status":"running",
+		"stage":"upload",
+		"total":10,
+		"processed":4,
+		"success":4,
+		"failed":1,
+		"progress":40,
+		"recent_files":[{"name":"show.mkv","size":123,"path":"upload","status":"success","upload_speed":456,"duration":"00:02"}],
+		"batches":[{"range":"batch 1/3","total":2,"success":2,"failed":0,"duration":"00:02"}],
+		"error_samples":[{"file":"bad.mkv","code":"rclone_copy_failed","reason":"copy failed","level":"error","payload":{"exit_code":1}}],
+		"accounts":[{"side":"source","label":"PikPak","account":"pikpak:","used_bytes":0,"total_bytes":0,"unit":"remote","ok":true}]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/progress", strings.NewReader(body))
+	res := httptest.NewRecorder()
+	app.postProgress(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected progress 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	for table, want := range map[string]int{
+		"recent_files":   1,
+		"batch_records":  1,
+		"error_samples":  1,
+		"account_health": 1,
+	} {
+		var got int
+		if err := db.QueryRow("SELECT COUNT(*) FROM " + table + " WHERE task_id='pikpak-to-115-migration'").Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("%s count = %d, want %d", table, got, want)
+		}
+	}
+}
