@@ -13,6 +13,7 @@ import type { Dashboard } from "@/lib/types";
 export default function DashboardPage() {
   const { data } = useSWR<Dashboard>("/api/dashboard", fetcher, { refreshInterval: 10000 });
   const d = data;
+  const uptime = d?.uptime_pct == null ? "—" : `${d.uptime_pct}%`;
   const segs = [
     { label: "正常", value: d?.healthy || 0, color: "#29d684" },
     { label: "运行中", value: d?.running || 0, color: "#3785ff" },
@@ -22,10 +23,10 @@ export default function DashboardPage() {
   return (
     <Shell title="总览" subtitle="我的服务现在还活着吗？同步任务进行到哪了？">
       <div className="grid grid-4 mb-20">
-        <MetricCard label="服务总数" value={d?.total_services ?? "—"} note={<><span className="t-green">{d?.healthy ?? 0} 正常</span> · <span className="t-blue">{d?.running ?? 0} 运行</span></>} tone="blue" icon="server" series={[5, 5, 6, 6, 6, 6, 7, d?.total_services || 7]} />
-        <MetricCard label="正常运行" value={d?.healthy ?? "—"} note={<>可用率 <span className="t-green tabnum">{d?.uptime_pct ?? 99.62}%</span></>} tone="green" icon="checkCircle" series={d?.sys?.cpu?.series?.map((v) => 100 - v)} />
-        <MetricCard label="异常服务" value={d?.error ?? "—"} note={<span className="t-red">需要立即处理</span>} tone="red" icon="alert" series={[0, 0, 1, 0, 0, 1, d?.error || 0]} />
-        <MetricCard label="今日告警" value={d?.today_alerts ?? "—"} note={`${d?.alerts?.length || 0} 条触发中`} tone="yellow" icon="alert" series={[1, 0, 2, 1, 3, 2, d?.today_alerts || 0]} />
+        <MetricCard label="服务总数" value={d?.total_services ?? "—"} note={<><span className="t-green">{d?.healthy ?? 0} 正常</span> · <span className="t-blue">{d?.running ?? 0} 运行</span></>} tone="blue" icon="server" />
+        <MetricCard label="正常运行" value={d?.healthy ?? "—"} note={<>可用率 <span className="t-green tabnum">{uptime}</span></>} tone="green" icon="checkCircle" series={d?.sys?.cpu?.series?.map((v) => 100 - v)} />
+        <MetricCard label="异常服务" value={d?.error ?? "—"} note={<span className="t-red">需要立即处理</span>} tone="red" icon="alert" />
+        <MetricCard label="今日告警" value={d?.today_alerts ?? "—"} note={`${d?.alerts?.length || 0} 条触发中`} tone="yellow" icon="alert" />
       </div>
 
       <div className="cols-12 mb-20">
@@ -61,7 +62,8 @@ export default function DashboardPage() {
         </div>
         <div className="span-4">
           <div className="card card-pad hoverable mb-20"><div className="card-head"><h3>任务进度</h3><span className="spacer" /><Link href="/sync" className="btn btn-ghost btn-sm"><ArrowRight size={14} /></Link></div>
-            {d?.sync_tasks?.slice(0, 5).map((t) => <Link key={t.task_id} href={t.service_key.includes("pikpak") ? "/services/pikpak-115" : `/sync/${t.task_id}`} className="route-card mb-16"><div className="row"><span style={{ fontWeight: 600 }}>{t.name}</span><span className="spacer" /><Badge status={t.status} /></div><div className="progress-row mt-8"><Progress value={t.progress} tone={t.status === "error" ? "red" : "blue"} /><span className="pct t-blue">{Math.round(t.progress || 0)}%</span></div><div className="text-muted" style={{ fontSize: 12 }}>{fmtCompact(t.processed)} / {fmtCompact(t.total)}</div></Link>)}
+            {d?.sync_tasks?.slice(0, 5).map((t) => <Link key={t.task_id} href={`/sync/${t.task_id}`} className="route-card mb-16"><div className="row"><span style={{ fontWeight: 600 }}>{t.name}</span><span className="spacer" /><Badge status={t.status} /></div><div className="progress-row mt-8"><Progress value={t.progress} tone={t.status === "error" ? "red" : "blue"} /><span className="pct t-blue">{Math.round(t.progress || 0)}%</span></div><div className="text-muted" style={{ fontSize: 12 }}>{fmtCompact(t.processed)} / {fmtCompact(t.total)}</div></Link>)}
+            {d?.sync_tasks?.length ? null : <div className="empty"><p>暂无同步任务</p></div>}
           </div>
           <div className="card card-pad hoverable"><div className="card-head"><h3>快捷操作</h3></div><div className="grid grid-2 gap-12"><Link href="/settings" className="btn btn-ghost">新增服务</Link><Link href="/api-docs" className="btn btn-ghost">接入文档</Link><Link href="/logs" className="btn btn-ghost">查看日志</Link><Link href="/alerts" className="btn btn-ghost">告警中心</Link></div><hr className="divider" /><div className="stat-grid"><div className="stat-box"><div className="k">今日完成任务</div><div className="v t-purple">{d?.today_completed_tasks || 0}</div></div><div className="stat-box"><div className="k">累计同步</div><div className="v t-cyan">{fmtBytes(d?.total_synced_bytes)}</div></div></div></div>
         </div>

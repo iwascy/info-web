@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -169,9 +168,6 @@ type File struct {
 }
 
 func main() {
-	seed := flag.Bool("seed", false, "seed demo data and exit")
-	flag.Parse()
-
 	dbPath := env("OPSPILOT_DB", "data/opspilot.sqlite")
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		log.Fatal(err)
@@ -183,13 +179,6 @@ func main() {
 	app := &App{db: db, token: env("OPSPILOT_TOKEN", defaultToken)}
 	if err := app.migrate(); err != nil {
 		log.Fatal(err)
-	}
-	if *seed {
-		if err := app.seed(); err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("seeded %s", dbPath)
-		return
 	}
 	go app.alertLoop()
 
@@ -513,16 +502,16 @@ func (a *App) getDashboard(w http.ResponseWriter, r *http.Request) {
 		"today_alerts":          len(alerts),
 		"today_completed_tasks": completed,
 		"total_synced_bytes":    synced,
-		"uptime_pct":            99.62,
-		"avg_latency_ms":        86,
+		"uptime_pct":            nil,
+		"avg_latency_ms":        nil,
 		"services":              services,
 		"sync_tasks":            tasks,
 		"alerts":                alerts,
 		"sys": map[string]any{
-			"cpu":  map[string]any{"value": 23, "series": []int{18, 21, 19, 24, 22, 26, 23, 20, 25, 28, 24, 22, 19, 23, 27, 25, 23, 21, 24, 23}},
-			"mem":  map[string]any{"value": 58, "series": []int{52, 54, 55, 53, 56, 58, 60, 59, 57, 58, 61, 60, 58, 56, 57, 59, 58, 60, 58, 58}},
-			"disk": map[string]any{"value": 42, "series": []int{40, 41, 41, 42, 42, 43, 42, 41, 42, 44, 43, 42, 42, 41, 42, 43, 42, 42, 41, 42}},
-			"net":  map[string]any{"value": 12.8, "series": []float64{8, 9, 11, 10, 12, 14, 13, 11, 12, 15, 13, 12, 10, 12, 14, 13, 12, 11, 13, 12.8}},
+			"cpu":  map[string]any{"value": 0, "series": []int{}},
+			"mem":  map[string]any{"value": 0, "series": []int{}},
+			"disk": map[string]any{"value": 0, "series": []int{}},
+			"net":  map[string]any{"value": 0, "series": []int{}},
 		},
 	})
 }
@@ -1066,109 +1055,6 @@ func (a *App) ensureAlert(serviceKey string, taskID *string, severity, title, ms
 	}
 }
 
-func (a *App) seed() error {
-	_, _ = a.db.Exec("DELETE FROM account_health; DELETE FROM recent_files; DELETE FROM error_samples; DELETE FROM batch_records; DELETE FROM alerts; DELETE FROM events; DELETE FROM sync_tasks; DELETE FROM services;")
-	now := time.Now()
-	services := []Service{
-		{ServiceKey: "order-sync", Name: "订单同步服务", Type: "sync", Status: "error"},
-		{ServiceKey: "user-api", Name: "用户服务 API", Type: "api", Status: "healthy"},
-		{ServiceKey: "product-crawler", Name: "商品爬虫服务", Type: "crawler", Status: "running"},
-		{ServiceKey: "inventory-sync", Name: "库存同步服务", Type: "sync", Status: "error"},
-		{ServiceKey: "report-generator", Name: "报表生成服务", Type: "script", Status: "healthy"},
-		{ServiceKey: "data-cleaner", Name: "数据清洗服务", Type: "script", Status: "running"},
-		{ServiceKey: "embedding-agent", Name: "向量化 Agent", Type: "agent", Status: "unknown"},
-		{ServiceKey: "pikpak-115-sg2", Name: "PikPak → 115 网盘迁移", Type: "sync", Status: "running"},
-	}
-	for i, s := range services {
-		hb := now.Add(-time.Duration(20+i*8) * time.Second).Format(time.RFC3339)
-		if s.Status == "unknown" {
-			_, _ = a.db.Exec("INSERT INTO services(service_key,name,type,status,message,heartbeat_timeout_sec,created_at) VALUES(?,?,?,?,?,?,?)", s.ServiceKey, s.Name, s.Type, s.Status, "等待首次上报", 90, now.Add(-48*time.Hour).Format(time.RFC3339))
-			continue
-		}
-		msg := "running"
-		if s.Status == "error" {
-			msg = "数据库写入失败，已重试 3 次"
-		}
-		_, _ = a.db.Exec("INSERT INTO services(service_key,name,type,status,message,last_heartbeat_at,heartbeat_timeout_sec,created_at) VALUES(?,?,?,?,?,?,?,?)", s.ServiceKey, s.Name, s.Type, s.Status, msg, hb, 3600, now.Add(-48*time.Hour).Format(time.RFC3339))
-	}
-	tasks := []map[string]any{
-		{"service_key": "order-sync", "task_id": "sync_order_001", "name": "订单数据同步任务", "status": "running", "stage": "cleaning", "total": int64(320000000), "processed": int64(217600000), "success": int64(215800000), "failed": int64(1320000), "skipped": int64(480000), "progress": 68.0, "message": "正在清洗订单数据"},
-		{"service_key": "user-api", "task_id": "sync_user_001", "name": "用户索引同步", "status": "running", "stage": "writing", "total": int64(12000000), "processed": int64(5040000), "success": int64(5039000), "failed": int64(1000), "progress": 42.0, "message": "写入 Elasticsearch"},
-		{"service_key": "inventory-sync", "task_id": "sync_inventory_001", "name": "库存同步", "status": "error", "stage": "writing", "total": int64(9000000), "processed": int64(2070000), "success": int64(2061000), "failed": int64(9000), "progress": 23.0, "message": "目标表写入超时"},
-		{"service_key": "report-generator", "task_id": "sync_report_009", "name": "日报数据归档", "status": "success", "stage": "verify", "total": int64(4200000), "processed": int64(4200000), "success": int64(4200000), "failed": int64(0), "progress": 100.0, "message": "已完成"},
-		{"service_key": "pikpak-115-sg2", "task_id": "pikpak_115_main", "name": "PikPak → 115 网盘迁移", "status": "running", "stage": "upload", "total": int64(50480), "processed": int64(37965), "success": int64(37965), "failed": int64(249), "skipped": int64(0), "progress": 75.2, "message": "正在上传至 115", "total_bytes": int64(6597069766656), "done_bytes": int64(4810363371520), "instant_files": int64(24130), "uploaded_files": int64(13835), "queue_size": int64(12017), "cursor": "1184273", "download_speed": int64(41 * 1048576), "upload_speed": int64(28 * 1048576), "current_file": "剧集/SomeShow.S07/E12.2160p.HDR.DV.mkv", "current_stage": "upload", "window_start": "02:00", "window_end": "08:00", "window_enabled": true},
-	}
-	for _, p := range tasks {
-		b, _ := json.Marshal(p)
-		req, _ := http.NewRequest("POST", "/api/progress", strings.NewReader(string(b)))
-		req.Header.Set("Content-Type", "application/json")
-		rr := &discardResponse{h: http.Header{}}
-		a.postProgress(rr, req)
-	}
-	dlSeries := []int64{36, 38, 34, 40, 42, 39, 44, 41, 37, 45, 43, 40, 38, 42, 41, 39, 43, 41, 44, 40, 38, 41}
-	ulSeries := []int64{22, 25, 21, 27, 29, 24, 30, 28, 23, 31, 27, 26, 24, 29, 28, 25, 30, 27, 29, 26, 25, 28}
-	for i := range dlSeries {
-		raw, _ := json.Marshal(map[string]any{"sample": i, "download_speed": dlSeries[i] * 1048576, "upload_speed": ulSeries[i] * 1048576})
-		msg := "吞吐采样"
-		stage := "upload"
-		status := "running"
-		created := now.Add(-time.Duration(len(dlSeries)-i) * 15 * time.Second).Format(time.RFC3339)
-		_, _ = a.db.Exec(`INSERT INTO events(service_key,task_id,type,level,message,stage,status,download_speed,upload_speed,raw_payload,created_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?)`, "pikpak-115-sg2", "pikpak_115_main", "progress", "info", msg, stage, status, dlSeries[i]*1048576, ulSeries[i]*1048576, string(raw), created)
-	}
-	a.ensureAlert("order-sync", strPtr("sync_order_001"), "high", "数据库写入失败，已重试 3 次", "ClickHouse timeout after 10s")
-	a.ensureAlert("data-cleaner", nil, "medium", "任务 10 分钟无进度更新", "running 任务疑似卡住")
-	a.ensureAlert("inventory-sync", strPtr("sync_inventory_001"), "high", "目标表写入超时", "SQL Server → ClickHouse 写入超时")
-	for i := 138; i >= 134; i-- {
-		_, _ = a.db.Exec("INSERT INTO batch_records(task_id,range_label,total,success,failed,duration,created_at) VALUES(?,?,?,?,?,?,?)", "sync_order_001", fmt.Sprintf("2026-06 #%d", i), 2400000, 2390000+int64(i), 6000, "2m 51s", now.Add(-time.Duration(138-i)*4*time.Minute).Format(time.RFC3339))
-	}
-	samples := []ErrSam{
-		{TaskID: "sync_order_001", File: "order_id=80021922", Code: "CH_TIMEOUT", Reason: "ClickHouse timeout (10s)", Level: "error", Payload: json.RawMessage(`{"retry_count":3,"host":"ch-node-2"}`)},
-		{TaskID: "pikpak_115_main", File: "OST.flac.zip", Code: "rate_limited", Reason: "115 上传限流（HTTP 429），已自动暂停并重排队", Level: "warning", Payload: json.RawMessage(`{"stage":"upload","http_status":429,"retry_after":120,"action":"pause_and_requeue"}`)},
-		{TaskID: "pikpak_115_main", File: "oldpack.rar", Code: "source_gone", Reason: "PikPak 源文件已失效（404），无法下载", Level: "error", Payload: json.RawMessage(`{"stage":"download","http_status":404}`)},
-	}
-	for _, e := range samples {
-		_, _ = a.db.Exec("INSERT INTO error_samples(task_id,file,code,reason,level,payload,created_at) VALUES(?,?,?,?,?,?,?)", e.TaskID, e.File, e.Code, e.Reason, e.Level, string(e.Payload), now.Format(time.RFC3339))
-	}
-	accounts := []Account{
-		{TaskID: "pikpak_115_main", Side: "source", Label: "PikPak（来源）", Account: "pp****@gmail.com", UsedBytes: bytesTB(3.2), TotalBytes: bytesTB(5), Unit: "traffic", Note: strPtr("token 6 天后过期"), OK: true},
-		{TaskID: "pikpak_115_main", Side: "target", Label: "115 网盘（目标）", Account: "115****8821", UsedBytes: bytesTB(4.37), TotalBytes: bytesTB(10), Unit: "quota", Note: strPtr("秒传命中 63.6%"), OK: true},
-	}
-	for _, ac := range accounts {
-		ok := 0
-		if ac.OK {
-			ok = 1
-		}
-		_, _ = a.db.Exec("INSERT INTO account_health(task_id,side,label,account,used_bytes,total_bytes,unit,note,ok) VALUES(?,?,?,?,?,?,?,?,?)", ac.TaskID, ac.Side, ac.Label, ac.Account, ac.UsedBytes, ac.TotalBytes, ac.Unit, ac.Note, ok)
-	}
-	dl41 := int64(41 * 1048576)
-	ul28 := int64(28 * 1048576)
-	dl38 := int64(38 * 1048576)
-	ul26 := int64(26 * 1048576)
-	dl33 := int64(33 * 1048576)
-	ul24 := int64(24 * 1048576)
-	files := []File{
-		{TaskID: "pikpak_115_main", Name: "E12.2160p.HDR.DV.mkv", Size: bytesGB(18.4), Path: "upload", Status: "running", DownloadSpeed: &dl41, UploadSpeed: &ul28},
-		{TaskID: "pikpak_115_main", Name: "E11.2160p.HDR.mkv", Size: bytesGB(16.1), Path: "instant", Status: "success", Duration: strPtr("00:02")},
-		{TaskID: "pikpak_115_main", Name: "E10.1080p.x265.mkv", Size: bytesGB(4.2), Path: "instant", Status: "success", Duration: strPtr("00:01")},
-		{TaskID: "pikpak_115_main", Name: "番外.Bonus.2160p.mkv", Size: bytesGB(9.8), Path: "download", Status: "success", DownloadSpeed: &dl38, UploadSpeed: &ul26, Duration: strPtr("06:48")},
-		{TaskID: "pikpak_115_main", Name: "API-relay.sample.mkv", Size: bytesGB(2.6), Path: "relay", Status: "success", DownloadSpeed: &dl33, UploadSpeed: &ul24, Duration: strPtr("03:18")},
-		{TaskID: "pikpak_115_main", Name: "OST.flac.zip", Size: 612 * 1048576, Path: "download", Status: "error", DownloadSpeed: &dl33, UploadSpeed: &ul24},
-	}
-	for _, f := range files {
-		_, _ = a.db.Exec("INSERT INTO recent_files(task_id,name,size,path,status,download_speed,upload_speed,duration,created_at) VALUES(?,?,?,?,?,?,?,?,?)", f.TaskID, f.Name, f.Size, f.Path, f.Status, f.DownloadSpeed, f.UploadSpeed, f.Duration, now.Format(time.RFC3339))
-	}
-	return nil
-}
-
-type discardResponse struct {
-	h http.Header
-}
-
-func (d *discardResponse) Header() http.Header         { return http.Header(d.h) }
-func (d *discardResponse) Write(b []byte) (int, error) { return len(b), nil }
-func (d *discardResponse) WriteHeader(statusCode int)  {}
-
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		writeErr(w, 400, "invalid json")
@@ -1244,12 +1130,6 @@ func strDefault(s, fallback string) string {
 	}
 	return s
 }
-
-func strPtr(s string) *string { return &s }
-
-func bytesGB(v float64) int64 { return int64(v * 1073741824) }
-
-func bytesTB(v float64) int64 { return int64(v * 1099511627776) }
 
 func strPtrFrom(m map[string]any, k string) *string {
 	if v, ok := m[k].(string); ok && v != "" {

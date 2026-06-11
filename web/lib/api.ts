@@ -47,7 +47,8 @@ export async function apiPut<T>(path: string, body: unknown): Promise<T> {
 async function authToken() {
   if (cachedToken) return cachedToken;
   const settings = await fetcher<Record<string, string>>("/api/settings");
-  cachedToken = settings.token || "opspilot-dev-token";
+  if (!settings.token) throw new Error("missing OpsPilot bearer token");
+  cachedToken = settings.token;
   return cachedToken;
 }
 

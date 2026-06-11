@@ -101,8 +101,8 @@ export interface Dashboard {
   today_alerts: number;
   today_completed_tasks: number;
   total_synced_bytes: number;
-  uptime_pct: number;
-  avg_latency_ms: number;
+  uptime_pct: number | null;
+  avg_latency_ms: number | null;
   services: Service[];
   sync_tasks: SyncTask[];
   alerts: Alert[];
