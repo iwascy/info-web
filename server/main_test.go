@@ -202,6 +202,124 @@ func TestProgressPersistsMigrationDetails(t *testing.T) {
 	}
 }
 
+func TestServerTrafficUpsertAndDashboard(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	app := &App{
+		db:       db,
+		token:    "ingest-token",
+		authConf: AuthConfig{Username: "opspilot", Password: "secret"},
+	}
+	if err := app.migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{
+		"server_key":"oracle-singapore-2",
+		"server_name":"甲骨文新加坡2号机",
+		"provider":"oracle",
+		"region":"sg",
+		"interface":"enp0s6",
+		"period":"2026-07",
+		"rx_bytes":100,
+		"tx_bytes":200,
+		"quota_bytes":1000,
+		"source":"vnstat",
+		"sampled_at":"2026-07-08T10:45:00Z"
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/server-traffic", strings.NewReader(body))
+	res := httptest.NewRecorder()
+	app.postServerTraffic(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected traffic post 200, got %d: %s", res.Code, res.Body.String())
+	}
+	var created ServerTraffic
+	if err := json.NewDecoder(res.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if created.TotalBytes != 300 {
+		t.Fatalf("total_bytes = %d, want 300", created.TotalBytes)
+	}
+	if created.UsagePct == nil || *created.UsagePct != 30 {
+		t.Fatalf("usage_pct = %v, want 30", created.UsagePct)
+	}
+
+	// Upsert same key with higher usage.
+	body2 := `{
+		"server_key":"oracle-singapore-2",
+		"server_name":"甲骨文新加坡2号机",
+		"provider":"oracle",
+		"region":"sg",
+		"interface":"enp0s6",
+		"period":"2026-07",
+		"rx_bytes":400,
+		"tx_bytes":600,
+		"quota_bytes":1000,
+		"source":"vnstat",
+		"sampled_at":"2026-07-09T01:00:00Z"
+	}`
+	req = httptest.NewRequest(http.MethodPost, "/api/server-traffic", strings.NewReader(body2))
+	res = httptest.NewRecorder()
+	app.postServerTraffic(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected traffic upsert 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM server_traffic").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("row count = %d, want 1 after upsert", count)
+	}
+
+	// Older period should not replace latest-only dashboard view.
+	oldBody := `{
+		"server_key":"oracle-singapore-2",
+		"server_name":"甲骨文新加坡2号机",
+		"interface":"enp0s6",
+		"period":"2026-06",
+		"rx_bytes":1,
+		"tx_bytes":1,
+		"quota_bytes":1000,
+		"source":"vnstat"
+	}`
+	req = httptest.NewRequest(http.MethodPost, "/api/server-traffic", strings.NewReader(oldBody))
+	res = httptest.NewRecorder()
+	app.postServerTraffic(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected old period post 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	dashReq := httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
+	dashRes := httptest.NewRecorder()
+	app.getDashboard(dashRes, dashReq)
+	if dashRes.Code != http.StatusOK {
+		t.Fatalf("expected dashboard 200, got %d: %s", dashRes.Code, dashRes.Body.String())
+	}
+	var dash map[string]any
+	if err := json.NewDecoder(dashRes.Body).Decode(&dash); err != nil {
+		t.Fatal(err)
+	}
+	if dash["server_traffic_bytes"].(float64) != 1000 {
+		t.Fatalf("server_traffic_bytes = %v, want 1000", dash["server_traffic_bytes"])
+	}
+	if dash["server_traffic_quota"].(float64) != 1000 {
+		t.Fatalf("server_traffic_quota = %v, want 1000", dash["server_traffic_quota"])
+	}
+	rows, ok := dash["server_traffic"].([]any)
+	if !ok || len(rows) != 1 {
+		t.Fatalf("server_traffic rows = %#v, want 1 latest", dash["server_traffic"])
+	}
+	row := rows[0].(map[string]any)
+	if row["period"] != "2026-07" || row["total_bytes"].(float64) != 1000 {
+		t.Fatalf("unexpected latest traffic row: %#v", row)
+	}
+}
+
 func TestProgressPreservesLastThroughput(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {

@@ -177,6 +177,26 @@ type File struct {
 	CreatedAt     string  `json:"created_at"`
 }
 
+// ServerTraffic is monthly public-interface usage reported by agents (e.g. vnstat).
+type ServerTraffic struct {
+	ID          int64    `json:"id"`
+	ServerKey   string   `json:"server_key"`
+	ServerName  string   `json:"server_name"`
+	Provider    *string  `json:"provider"`
+	Region      *string  `json:"region"`
+	Interface   string   `json:"interface"`
+	Period      string   `json:"period"`
+	RxBytes     int64    `json:"rx_bytes"`
+	TxBytes     int64    `json:"tx_bytes"`
+	TotalBytes  int64    `json:"total_bytes"`
+	QuotaBytes  int64    `json:"quota_bytes"`
+	UsagePct    *float64 `json:"usage_pct"`
+	Source      string   `json:"source"`
+	SampledAt   string   `json:"sampled_at"`
+	UpdatedAt   string   `json:"updated_at"`
+	Note        *string  `json:"note"`
+}
+
 func main() {
 	dbPath := env("OPSPILOT_DB", "data/opspilot.sqlite")
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
@@ -211,6 +231,8 @@ func main() {
 		r.With(app.panelAuth).Get("/auth/me", app.me)
 		r.With(app.ingestAuth).Post("/heartbeat", app.postHeartbeat)
 		r.With(app.ingestAuth).Post("/progress", app.postProgress)
+		r.With(app.ingestAuth).Post("/server-traffic", app.postServerTraffic)
+		r.With(app.panelAuth).Get("/server-traffic", app.getServerTraffic)
 		r.With(app.panelAuth).Get("/dashboard", app.getDashboard)
 		r.With(app.panelAuth).Get("/services", app.getServices)
 		r.With(app.panelAuth).Post("/services", app.createService)
@@ -389,8 +411,27 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS server_traffic (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  server_key TEXT NOT NULL,
+  server_name TEXT NOT NULL,
+  provider TEXT,
+  region TEXT,
+  interface TEXT NOT NULL,
+  period TEXT NOT NULL,
+  rx_bytes INTEGER NOT NULL DEFAULT 0,
+  tx_bytes INTEGER NOT NULL DEFAULT 0,
+  total_bytes INTEGER NOT NULL DEFAULT 0,
+  quota_bytes INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'vnstat',
+  sampled_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  note TEXT,
+  UNIQUE(server_key, interface, period)
+);
 CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status, triggered_at DESC);
+CREATE INDEX IF NOT EXISTS idx_server_traffic_period ON server_traffic(period DESC, total_bytes DESC);
 `)
 	if err != nil {
 		return err
@@ -639,6 +680,7 @@ func (a *App) getDashboard(w http.ResponseWriter, r *http.Request) {
 	services, _ := a.listServices()
 	tasks, _ := a.listTasks(false)
 	alerts, _ := a.listAlerts("firing")
+	traffic, _ := a.listServerTraffic(true)
 	counts := map[string]int{"healthy": 0, "running": 0, "warning": 0, "error": 0, "unknown": 0, "paused": 0}
 	for _, s := range services {
 		counts[s.Status]++
@@ -658,6 +700,11 @@ func (a *App) getDashboard(w http.ResponseWriter, r *http.Request) {
 			totalProgress += *t.Progress
 			progressCount++
 		}
+	}
+	var trafficBytes, trafficQuota int64
+	for _, tr := range traffic {
+		trafficBytes += tr.TotalBytes
+		trafficQuota += tr.QuotaBytes
 	}
 	uptime := 0.0
 	if len(services) > 0 {
@@ -680,11 +727,97 @@ func (a *App) getDashboard(w http.ResponseWriter, r *http.Request) {
 		"total_synced_bytes":    synced,
 		"uptime_pct":            round2(uptime),
 		"avg_progress_pct":      round2(avgProgress),
+		"server_traffic_bytes":  trafficBytes,
+		"server_traffic_quota":  trafficQuota,
+		"server_traffic":        traffic,
 		"services":              services,
 		"sync_tasks":            tasks,
 		"alerts":                alerts,
 		"sys":                   a.runtimeStats(),
 	})
+}
+
+func (a *App) postServerTraffic(w http.ResponseWriter, r *http.Request) {
+	var p struct {
+		ServerKey  string  `json:"server_key"`
+		ServerName string  `json:"server_name"`
+		Provider   *string `json:"provider"`
+		Region     *string `json:"region"`
+		Interface  string  `json:"interface"`
+		Period     string  `json:"period"`
+		RxBytes    int64   `json:"rx_bytes"`
+		TxBytes    int64   `json:"tx_bytes"`
+		TotalBytes *int64  `json:"total_bytes"`
+		QuotaBytes int64   `json:"quota_bytes"`
+		Source     string  `json:"source"`
+		SampledAt  string  `json:"sampled_at"`
+		Note       *string `json:"note"`
+	}
+	if !decode(w, r, &p) {
+		return
+	}
+	p.ServerKey = strings.TrimSpace(p.ServerKey)
+	p.ServerName = strings.TrimSpace(p.ServerName)
+	p.Interface = strings.TrimSpace(p.Interface)
+	p.Period = strings.TrimSpace(p.Period)
+	if p.ServerKey == "" || p.Interface == "" || p.Period == "" {
+		writeErr(w, 400, "server_key, interface and period are required")
+		return
+	}
+	if p.ServerName == "" {
+		p.ServerName = p.ServerKey
+	}
+	if p.Source == "" {
+		p.Source = "vnstat"
+	}
+	total := p.RxBytes + p.TxBytes
+	if p.TotalBytes != nil && *p.TotalBytes > 0 {
+		total = *p.TotalBytes
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	sampledAt := strings.TrimSpace(p.SampledAt)
+	if sampledAt == "" {
+		sampledAt = now
+	}
+	_, err := a.db.Exec(`
+INSERT INTO server_traffic(
+  server_key, server_name, provider, region, interface, period,
+  rx_bytes, tx_bytes, total_bytes, quota_bytes, source, sampled_at, updated_at, note
+) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(server_key, interface, period) DO UPDATE SET
+  server_name=excluded.server_name,
+  provider=excluded.provider,
+  region=excluded.region,
+  rx_bytes=excluded.rx_bytes,
+  tx_bytes=excluded.tx_bytes,
+  total_bytes=excluded.total_bytes,
+  quota_bytes=excluded.quota_bytes,
+  source=excluded.source,
+  sampled_at=excluded.sampled_at,
+  updated_at=excluded.updated_at,
+  note=excluded.note
+`, p.ServerKey, p.ServerName, p.Provider, p.Region, p.Interface, p.Period,
+		p.RxBytes, p.TxBytes, total, p.QuotaBytes, p.Source, sampledAt, now, p.Note)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	row, err := a.serverTrafficByKey(p.ServerKey, p.Interface, p.Period)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, row)
+}
+
+func (a *App) getServerTraffic(w http.ResponseWriter, r *http.Request) {
+	latestOnly := r.URL.Query().Get("latest") != "0"
+	rows, err := a.listServerTraffic(latestOnly)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, rows)
 }
 
 func (a *App) getServices(w http.ResponseWriter, r *http.Request) {
@@ -1143,6 +1276,63 @@ func reverse(xs []int64) {
 	for i, j := 0, len(xs)-1; i < j; i, j = i+1, j-1 {
 		xs[i], xs[j] = xs[j], xs[i]
 	}
+}
+
+func (a *App) listServerTraffic(latestOnly bool) ([]ServerTraffic, error) {
+	rows, err := a.db.Query(`
+SELECT id, server_key, server_name, provider, region, interface, period,
+       rx_bytes, tx_bytes, total_bytes, quota_bytes, source, sampled_at, updated_at, note
+FROM server_traffic
+ORDER BY period DESC, total_bytes DESC, server_key ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]ServerTraffic, 0)
+	seen := map[string]bool{}
+	for rows.Next() {
+		var t ServerTraffic
+		if err := rows.Scan(
+			&t.ID, &t.ServerKey, &t.ServerName, &t.Provider, &t.Region, &t.Interface, &t.Period,
+			&t.RxBytes, &t.TxBytes, &t.TotalBytes, &t.QuotaBytes, &t.Source, &t.SampledAt, &t.UpdatedAt, &t.Note,
+		); err != nil {
+			return nil, err
+		}
+		if latestOnly {
+			key := t.ServerKey + "\x00" + t.Interface
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+		}
+		t.UsagePct = trafficUsagePct(t.TotalBytes, t.QuotaBytes)
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (a *App) serverTrafficByKey(serverKey, iface, period string) (ServerTraffic, error) {
+	var t ServerTraffic
+	err := a.db.QueryRow(`
+SELECT id, server_key, server_name, provider, region, interface, period,
+       rx_bytes, tx_bytes, total_bytes, quota_bytes, source, sampled_at, updated_at, note
+FROM server_traffic WHERE server_key=? AND interface=? AND period=?`, serverKey, iface, period).Scan(
+		&t.ID, &t.ServerKey, &t.ServerName, &t.Provider, &t.Region, &t.Interface, &t.Period,
+		&t.RxBytes, &t.TxBytes, &t.TotalBytes, &t.QuotaBytes, &t.Source, &t.SampledAt, &t.UpdatedAt, &t.Note,
+	)
+	if err != nil {
+		return t, err
+	}
+	t.UsagePct = trafficUsagePct(t.TotalBytes, t.QuotaBytes)
+	return t, nil
+}
+
+func trafficUsagePct(total, quota int64) *float64 {
+	if quota <= 0 {
+		return nil
+	}
+	pct := round2(float64(total) / float64(quota) * 100)
+	return &pct
 }
 
 func (a *App) listAlerts(status string) ([]Alert, error) {
