@@ -1,34 +1,80 @@
 "use client";
 
 import Link from "next/link";
-import { Activity, AlertTriangle, ArrowLeftRight, Bot, CheckCircle2, Database, Download, FileText, Globe, KeyRound, Layers, RefreshCw, Search, Server, Shield, Upload, Zap } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  ArrowLeftRight,
+  Bot,
+  CheckCircle2,
+  Database,
+  Download,
+  FileText,
+  Globe,
+  Inbox,
+  KeyRound,
+  Layers,
+  RefreshCw,
+  Search,
+  Server,
+  Shield,
+  Upload,
+  Zap
+} from "lucide-react";
 import { fmtBytes, statusTone, STATUS_LABEL, toneColor, TYPE_LABEL } from "@/lib/format";
 import { Sparkline } from "./Charts";
 
 export function Badge({ status, label }: { status: string; label?: string }) {
   const tone = statusTone(status);
   const pulse = status === "running" || status === "error";
-  return <span className={`badge st-${tone}`}><span className={`dot ${pulse ? "pulse" : ""}`} />{label || STATUS_LABEL[status] || status}</span>;
+  return (
+    <span className={`badge st-${tone}`}>
+      <span className={`dot ${pulse ? "pulse" : ""}`} />
+      {label || STATUS_LABEL[status] || status}
+    </span>
+  );
 }
 
 export function Progress({ value, tone = "blue", large = false }: { value?: number | null; tone?: string; large?: boolean }) {
   const v = Math.max(0, Math.min(100, value || 0));
   const fillTone = tone === "error" ? "red" : tone === "healthy" ? "green" : tone === "warning" ? "yellow" : tone === "running" ? "blue" : tone;
-  return <div className={`progress ${large ? "lg" : ""}`}><div className={`fill ${fillTone} ${fillTone === "blue" || fillTone === "cyan" ? "animated" : ""}`} style={{ width: `${v}%` }} /></div>;
+  return (
+    <div className={`progress ${large ? "lg" : ""}`}>
+      <div className={`fill ${fillTone} ${fillTone === "blue" || fillTone === "cyan" ? "animated" : ""}`} style={{ width: `${v}%` }} />
+    </div>
+  );
 }
 
-export function MetricCard({ label, value, note, tone = "blue", icon = "activity", series }: { label: string; value: React.ReactNode; note?: React.ReactNode; tone?: string; icon?: string; series?: number[] }) {
+export function MetricCard({
+  label,
+  value,
+  note,
+  tone = "blue",
+  icon = "activity",
+  series
+}: {
+  label: string;
+  value: React.ReactNode;
+  note?: React.ReactNode;
+  tone?: string;
+  icon?: string;
+  series?: number[];
+}) {
   return (
     <div className="card metric hoverable">
       <div className="metric-top">
-        <div className={`metric-icon ic-${tone}`}>{pickIcon(icon, 23)}</div>
+        <div className={`metric-icon ic-${tone}`}>{pickIcon(icon, 20)}</div>
         <div className="flex-1">
           <div className="metric-label">{label}</div>
           <div className="metric-value">{value}</div>
-          {note ? <div className="metric-note">{note}</div> : null}
+          {note ? <div className="metric-note">{note}</div> : <div className="metric-note" aria-hidden="true">&nbsp;</div>}
         </div>
       </div>
-      {series ? <div className="spark"><Sparkline series={series} color={toneColor(tone)} width={120} height={46} /></div> : null}
+      {series ? (
+        <div className="spark">
+          <Sparkline series={series} color={toneColor(tone)} width={120} height={40} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -43,8 +89,22 @@ export function CellIcon({ type, icon }: { type?: string; icon?: string }) {
 }
 
 export function ServiceCell({ href, name, sub, type }: { href?: string; name: string; sub: string; type?: string }) {
-  const inner = <div className="cell-primary"><CellIcon type={type} /><div><div className="cell-title">{name}</div><div className="cell-key">{sub}</div></div></div>;
-  return href ? <Link className="route-card" href={href}>{inner}</Link> : inner;
+  const inner = (
+    <div className="cell-primary">
+      <CellIcon type={type} />
+      <div className="min-w-0">
+        <div className="cell-title" title={name}>{name}</div>
+        <div className="cell-key" title={sub}>{sub}</div>
+      </div>
+    </div>
+  );
+  return href ? (
+    <Link className="route-card" href={href}>
+      {inner}
+    </Link>
+  ) : (
+    inner
+  );
 }
 
 export function JsonBlock({ value }: { value: unknown }) {
@@ -53,7 +113,64 @@ export function JsonBlock({ value }: { value: unknown }) {
 
 export function Speed({ value, arrow }: { value?: number | null; arrow: "up" | "down" }) {
   if (!value) return <span className="text-dim">—</span>;
-  return <span className={arrow === "up" ? "t-green" : "t-blue"}>{arrow === "up" ? "↑" : "↓"}{fmtBytes(value)}/s</span>;
+  return (
+    <span className={arrow === "up" ? "t-green" : "t-blue"}>
+      {arrow === "up" ? "↑" : "↓"}
+      {fmtBytes(value)}/s
+    </span>
+  );
+}
+
+export function EmptyState({ title, description, icon = "inbox" }: { title?: string; description?: string; icon?: string }) {
+  return (
+    <div className="empty">
+      {pickIcon(icon, 48)}
+      {title ? <h4>{title}</h4> : null}
+      {description ? <p>{description}</p> : null}
+    </div>
+  );
+}
+
+export function MetricSkeletonRow() {
+  return (
+    <div className="grid grid-4">
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} className="skeleton skeleton-metric" />
+      ))}
+    </div>
+  );
+}
+
+export function PageStack({ children }: { children: React.ReactNode }) {
+  return <div className="page-stack">{children}</div>;
+}
+
+export function Toolbar({ left, right }: { left?: React.ReactNode; right?: React.ReactNode }) {
+  return (
+    <div className="toolbar-row">
+      <div className="chips">{left}</div>
+      {right ? <div className="row gap-12">{right}</div> : null}
+    </div>
+  );
+}
+
+export function Chip({
+  active,
+  onClick,
+  children,
+  count
+}: {
+  active?: boolean;
+  onClick?: () => void;
+  children: React.ReactNode;
+  count?: number | string;
+}) {
+  return (
+    <button type="button" className={`chip ${active ? "active" : ""}`} onClick={onClick}>
+      {children}
+      {count != null ? <span className="count">{count}</span> : null}
+    </button>
+  );
 }
 
 export function pickIcon(name: string, size = 18) {
@@ -67,6 +184,7 @@ export function pickIcon(name: string, size = 18) {
     database: <Database {...props} />,
     file: <FileText {...props} />,
     globe: <Globe {...props} />,
+    inbox: <Inbox {...props} />,
     key: <KeyRound {...props} />,
     layers: <Layers {...props} />,
     refresh: <RefreshCw {...props} />,

@@ -1,5 +1,5 @@
 export type ServiceStatus = "healthy" | "running" | "warning" | "error" | "unknown" | "paused";
-export type TaskStatus = "running" | "success" | "error" | "paused" | "warning";
+export type TaskStatus = "running" | "success" | "error" | "paused" | "warning" | "retry_waiting";
 
 export interface Service {
   id: number;
@@ -44,6 +44,12 @@ export interface SyncTask {
   window_start: string | null;
   window_end: string | null;
   window_enabled: boolean | null;
+  attempt?: number | null;
+  max_attempts?: number | null;
+  retry_count?: number | null;
+  next_attempt_at?: string | null;
+  last_error?: string | null;
+  dead_letter?: boolean | null;
   download_series?: number[];
   upload_series?: number[];
   stages?: Stage[];
@@ -69,6 +75,25 @@ export interface Alert {
   status: "firing" | "resolved" | "muted";
   triggered_at: string;
   resolved_at: string | null;
+}
+
+export interface ServerTraffic {
+  id: number;
+  server_key: string;
+  server_name: string;
+  provider: string | null;
+  region: string | null;
+  interface: string;
+  period: string;
+  rx_bytes: number;
+  tx_bytes: number;
+  total_bytes: number;
+  quota_bytes: number;
+  usage_pct: number | null;
+  source: string;
+  sampled_at: string;
+  updated_at: string;
+  note: string | null;
 }
 
 export interface EventRecord {
@@ -101,8 +126,12 @@ export interface Dashboard {
   today_alerts: number;
   today_completed_tasks: number;
   total_synced_bytes: number;
-  uptime_pct: number;
-  avg_progress_pct: number;
+  uptime_pct: number | null;
+  avg_progress_pct?: number | null;
+  avg_latency_ms?: number | null;
+  server_traffic_bytes?: number;
+  server_traffic_quota?: number;
+  server_traffic?: ServerTraffic[];
   services: Service[];
   sync_tasks: SyncTask[];
   alerts: Alert[];

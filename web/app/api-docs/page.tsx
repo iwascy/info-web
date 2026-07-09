@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { Check, ClipboardCopy } from "lucide-react";
 import { Shell } from "@/components/Shell";
+import { PageStack } from "@/components/UI";
 import { API_BASE, fetcher } from "@/lib/api";
 
 export default function ApiDocsPage() {
@@ -17,8 +18,12 @@ export default function ApiDocsPage() {
   const progress = `curl -X POST ${API_BASE}/api/progress \\
   -H "Authorization: Bearer ${token}" \\
   -H "Content-Type: application/json" \\
-  -d '{"service_key":"your-service-key","task_id":"stable-task-id","name":"任务展示名","stage":"running","total":1000,"processed":420,"success":410,"failed":2,"progress":42.0}'`;
-  const endpoints = ["POST /api/heartbeat", "POST /api/progress", "GET /api/dashboard", "GET /api/services", "POST /api/services", "GET /api/services/{key}", "DELETE /api/services/{key}", "GET /api/sync-tasks", "GET /api/sync-tasks/{id}", "POST /api/sync-tasks/{id}/pause", "POST /api/sync-tasks/{id}/resume", "GET /api/alerts", "POST /api/alerts/resolve-all", "POST /api/alerts/{id}/resolve", "POST /api/alerts/{id}/mute", "GET /api/events?type=&q=&limit=", "GET /api/settings", "PUT /api/settings", "POST /api/token/reset"];
+  -d '{"service_key":"your-service-key","task_id":"stable-task-id","name":"任务展示名","status":"running","stage":"upload","total":1000,"processed":420,"success":410,"failed":2,"progress":42.0,"current_file":"文件名已隐藏","download_speed":10485760,"upload_speed":8388608}'`;
+  const traffic = `curl -X POST ${API_BASE}/api/server-traffic \\
+  -H "Authorization: Bearer ${token}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"server_key":"oracle-singapore-2","server_name":"甲骨文新加坡2号机","provider":"oracle","region":"sg","interface":"enp0s6","period":"2026-07","rx_bytes":984671648,"tx_bytes":1550730691,"quota_bytes":10995116277760,"source":"vnstat","sampled_at":"2026-07-08T10:45:00Z"}'`;
+  const endpoints = ["POST /api/heartbeat", "POST /api/progress", "GET /api/server-traffic", "POST /api/server-traffic", "GET /api/dashboard", "GET /api/services", "POST /api/services", "GET /api/services/{key}", "DELETE /api/services/{key}", "GET /api/sync-tasks", "GET /api/sync-tasks/{id}", "POST /api/sync-tasks/{id}/pause", "POST /api/sync-tasks/{id}/resume", "GET /api/alerts", "POST /api/alerts/resolve-all", "POST /api/alerts/{id}/resolve", "POST /api/alerts/{id}/mute", "GET /api/events?type=&q=&limit=", "GET /api/settings", "PUT /api/settings", "POST /api/token/reset"];
   const aiPrompt = useMemo(() => buildAiPrompt(API_BASE, token), [token]);
 
   async function copyAiPrompt() {
@@ -29,20 +34,66 @@ export default function ApiDocsPage() {
 
   return (
     <Shell title="API 文档" subtitle="被监控服务主动 PUSH 上报，前端查询 REST API。">
-      <div className="card card-pad mb-20">
-        <div className="card-head">
-          <h3>发送给 AI 完成接入</h3>
-          <span className="sub">复制后发给目标服务的代码助手，让它自动加上心跳与进度上报。</span>
-          <span className="spacer" />
-          <button className="btn btn-primary" onClick={copyAiPrompt}>
-            {copied ? <Check size={16} /> : <ClipboardCopy size={16} />}
-            {copied ? "已复制" : "复制给 AI"}
-          </button>
+      <PageStack>
+        <div className="card card-pad">
+          <div className="card-head">
+            <h3>发送给 AI 完成接入</h3>
+            <span className="sub">复制后发给目标服务的代码助手，让它自动加上心跳与进度上报。</span>
+            <span className="spacer" />
+            <button className="btn btn-primary" onClick={copyAiPrompt} type="button">
+              {copied ? <Check size={16} /> : <ClipboardCopy size={16} />}
+              {copied ? "已复制" : "复制给 AI"}
+            </button>
+          </div>
+          <pre className="codeblock json-pre">{aiPrompt}</pre>
         </div>
-        <pre className="codeblock json-pre">{aiPrompt}</pre>
-      </div>
-      <div className="cols-12"><div className="span-6 card card-pad"><div className="card-head"><h3>心跳上报</h3></div><pre className="codeblock">{heartbeat}</pre></div><div className="span-6 card card-pad"><div className="card-head"><h3>进度上报</h3></div><pre className="codeblock">{progress}</pre></div></div>
-      <div className="card card-pad mt-20"><div className="card-head"><h3>Endpoints</h3></div><div className="table-wrap"><table className="tbl"><thead><tr><th>接口</th><th>说明</th></tr></thead><tbody>{endpoints.map((e) => <tr key={e}><td className="mono">{e}</td><td className="text-muted">{e.startsWith("POST") || e.startsWith("PUT") || e.startsWith("DELETE") ? "写入 / 动作（需 Bearer）" : "查询（需 Bearer）"}</td></tr>)}</tbody></table></div></div>
+        <div className="cols-12">
+          <div className="span-6 card card-pad">
+            <div className="card-head">
+              <h3>心跳上报</h3>
+            </div>
+            <pre className="codeblock">{heartbeat}</pre>
+          </div>
+          <div className="span-6 card card-pad">
+            <div className="card-head">
+              <h3>进度上报</h3>
+            </div>
+            <pre className="codeblock">{progress}</pre>
+          </div>
+        </div>
+        <div className="card card-pad">
+          <div className="card-head">
+            <h3>服务器流量上报</h3>
+            <span className="sub">Oracle 10 TiB 月度配额，建议只上报公网接口。</span>
+          </div>
+          <pre className="codeblock">{traffic}</pre>
+        </div>
+        <div className="card card-pad">
+          <div className="card-head">
+            <h3>Endpoints</h3>
+          </div>
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>接口</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                {endpoints.map((e) => (
+                  <tr key={e}>
+                    <td className="mono">{e}</td>
+                    <td className="text-muted">
+                      {e.startsWith("POST") || e.startsWith("PUT") || e.startsWith("DELETE") ? "写入 / 动作（需 Bearer）" : "查询"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </PageStack>
     </Shell>
   );
 }
@@ -84,7 +135,7 @@ Body:
   "service_key": "your-service-key",
   "task_id": "stable-task-id",
   "name": "任务展示名",
-  "status": "running|success|error|paused",
+  "status": "running|success|error|paused|retry_waiting",
   "stage": "scan|download|upload|verify|cleaning|writing|...",
   "total": 1000,
   "processed": 420,
@@ -93,9 +144,16 @@ Body:
   "skipped": 8,
   "progress": 42.0,
   "message": "正在处理",
-  "file_name": "文件名已隐藏（可选）",
+  "file_name": "当前文件名（可选）",
+  "current_file": "当前文件名（可选，优先用于详情页）",
   "download_speed": 10485760,
-  "upload_speed": 8388608
+  "upload_speed": 8388608,
+  "attempt": 1,
+  "max_attempts": 5,
+  "retry_count": 0,
+  "next_attempt_at": "2026-06-25T16:30:00+08:00",
+  "last_error": "最近一次失败原因",
+  "dead_letter": false
 }
 
 如果是文件迁移或类似任务，请额外上报这些字段：
@@ -106,11 +164,30 @@ Body:
   "uploaded_files": 300,
   "queue_size": 80,
   "cursor": "断点游标或 last message id",
-  "current_file": "文件名已隐藏",
+  "current_file": "当前文件名",
   "current_stage": "scan|download|upload|verify|done",
   "window_start": "02:00",
   "window_end": "08:00",
   "window_enabled": true
+}
+
+服务器月度流量接口：
+POST ${apiBase}/api/server-traffic
+Headers:
+  Authorization: Bearer ${token}
+Body:
+{
+  "server_key": "oracle-singapore-2",
+  "server_name": "甲骨文新加坡2号机",
+  "provider": "oracle",
+  "region": "sg",
+  "interface": "enp0s6",
+  "period": "2026-07",
+  "rx_bytes": 984671648,
+  "tx_bytes": 1550730691,
+  "quota_bytes": 10995116277760,
+  "source": "vnstat",
+  "sampled_at": "2026-07-08T10:45:00Z"
 }
 
 验收：

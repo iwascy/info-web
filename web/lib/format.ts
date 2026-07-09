@@ -9,7 +9,8 @@ export const STATUS_LABEL: Record<string, string> = {
   resolved: "已恢复",
   muted: "已静默",
   success: "成功",
-  ok: "正常"
+  ok: "正常",
+  retry_waiting: "等待重试"
 };
 
 export const TYPE_LABEL: Record<string, string> = {
@@ -21,8 +22,33 @@ export const TYPE_LABEL: Record<string, string> = {
   worker: "Worker"
 };
 
+/** Filter / chip labels (status, severity, event type, etc.) */
+export const FILTER_LABEL: Record<string, string> = {
+  all: "全部",
+  healthy: "正常",
+  running: "运行中",
+  warning: "警告",
+  error: "异常",
+  unknown: "未知",
+  paused: "暂停",
+  success: "成功",
+  firing: "触发中",
+  resolved: "已恢复",
+  muted: "已静默",
+  high: "高",
+  medium: "中",
+  low: "低",
+  heartbeat: "心跳",
+  progress: "进度",
+  system: "系统"
+};
+
+export function filterLabel(key: string) {
+  return FILTER_LABEL[key] || STATUS_LABEL[key] || key;
+}
+
 export function statusTone(s?: string | null) {
-  return ({ healthy: "healthy", running: "running", warning: "warning", error: "error", unknown: "unknown", paused: "paused", success: "healthy", ok: "healthy", firing: "error", resolved: "healthy", muted: "paused" } as Record<string, string>)[s || ""] || "unknown";
+  return ({ healthy: "healthy", running: "running", warning: "warning", error: "error", unknown: "unknown", paused: "paused", retry_waiting: "warning", success: "healthy", ok: "healthy", firing: "error", resolved: "healthy", muted: "paused" } as Record<string, string>)[s || ""] || "unknown";
 }
 
 export function toneColor(tone: string) {
