@@ -10,6 +10,9 @@ import { fetcher } from "@/lib/api";
 import { fmtBytes, fmtCompact, fmtRelative, statusTone } from "@/lib/format";
 import type { Dashboard } from "@/lib/types";
 
+/** 总览页「最近告警」最多展示条数，避免列表过长撑高整页 */
+const RECENT_ALERTS_LIMIT = 5;
+
 export default function DashboardPage() {
   const { data } = useSWR<Dashboard>("/api/dashboard", fetcher, { refreshInterval: 10000 });
   const d = data;
@@ -166,19 +169,26 @@ export default function DashboardPage() {
             </div>
             <div className="alert-list">
               {d?.alerts?.length ? (
-                d.alerts.map((a) => (
-                  <Link key={a.id} href="/alerts" className="alert-item">
-                    <div className="row gap-12">
-                      <span className={`sev sev-${a.severity}`}>{a.severity}</span>
-                      <div className="flex-1">
-                        <div className="alert-item-title">{a.title}</div>
-                        <div className="alert-item-meta">
-                          {a.service_key} · {fmtRelative(a.triggered_at)}
+                <>
+                  {d.alerts.slice(0, RECENT_ALERTS_LIMIT).map((a) => (
+                    <Link key={a.id} href="/alerts" className="alert-item">
+                      <div className="row gap-12">
+                        <span className={`sev sev-${a.severity}`}>{a.severity}</span>
+                        <div className="flex-1">
+                          <div className="alert-item-title">{a.title}</div>
+                          <div className="alert-item-meta">
+                            {a.service_key} · {fmtRelative(a.triggered_at)}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </Link>
-                ))
+                    </Link>
+                  ))}
+                  {d.alerts.length > RECENT_ALERTS_LIMIT ? (
+                    <Link href="/alerts" className="alert-list-more">
+                      还有 {d.alerts.length - RECENT_ALERTS_LIMIT} 条 · 查看全部
+                    </Link>
+                  ) : null}
+                </>
               ) : (
                 <EmptyState title="暂无触发中的告警" description="所有服务运行正常" />
               )}
