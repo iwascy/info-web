@@ -96,6 +96,31 @@ export interface ServerTraffic {
   note: string | null;
 }
 
+export interface DCSpeedStat {
+  dc_id: number;
+  sample_count: number;
+  excluded_count: number;
+  failure_count: number;
+  total_bytes: number;
+  total_duration_ms: number;
+  average_speed: number;
+  median_speed: number;
+  peak_speed: number;
+  last_speed: number;
+  last_updated_at: string;
+}
+
+export interface DCSpeedOverview {
+  service_key: string;
+  generated_at: string;
+  retention_days: number;
+  max_samples_per_dc: number;
+  min_bytes: number;
+  min_duration_ms: number;
+  reported_at: string;
+  dcs: DCSpeedStat[];
+}
+
 export interface EventRecord {
   id: number;
   service_key: string;

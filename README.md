@@ -95,3 +95,12 @@ curl -X POST http://localhost:8080/api/progress \
   -H "Content-Type: application/json" \
   -d '{"service_key":"your-service-key","task_id":"stable-task-id","name":"任务展示名","stage":"running","total":1000,"processed":420,"success":410,"failed":2,"progress":42.0}'
 ```
+
+Telegram 下载服务可按完整快照上报各 DC 的下载速度聚合：
+
+```bash
+curl -X POST http://localhost:8080/api/dc-download-stats \
+  -H "Authorization: Bearer <OPSPILOT_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"service_key":"telegram-saver","generated_at":"2026-07-24T12:00:00Z","retention_days":30,"max_samples_per_dc":200,"min_bytes":5242880,"min_duration_ms":2000,"dcs":[{"dc_id":5,"sample_count":3,"excluded_count":1,"failure_count":0,"total_bytes":314572800,"total_duration_ms":30000,"average_speed":10485760,"median_speed":9961472,"peak_speed":12582912,"last_speed":11010048,"last_updated_at":"2026-07-24T11:59:30Z"}]}'
+```

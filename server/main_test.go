@@ -374,3 +374,73 @@ func TestProgressPreservesLastThroughput(t *testing.T) {
 		t.Fatalf("throughput = %d/%d, want 10485760/8388608", dl, ul)
 	}
 }
+
+func TestDCSpeedOverviewReplacesServiceSnapshot(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	app := &App{
+		db:       db,
+		token:    "ingest-token",
+		authConf: AuthConfig{Username: "opspilot", Password: "secret"},
+	}
+	if err := app.migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	first := `{
+		"service_key":"telegram-saver",
+		"generated_at":"2026-07-24T12:00:00Z",
+		"retention_days":30,
+		"max_samples_per_dc":200,
+		"min_bytes":5242880,
+		"min_duration_ms":2000,
+		"dcs":[
+			{"dc_id":2,"sample_count":3,"excluded_count":1,"failure_count":0,"total_bytes":300,"total_duration_ms":30,"average_speed":10,"median_speed":9,"peak_speed":12,"last_speed":11,"last_updated_at":"2026-07-24T11:59:00Z"},
+			{"dc_id":5,"sample_count":4,"excluded_count":0,"failure_count":1,"total_bytes":800,"total_duration_ms":40,"average_speed":20,"median_speed":19,"peak_speed":24,"last_speed":21,"last_updated_at":"2026-07-24T11:59:30Z"}
+		]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/dc-download-stats", strings.NewReader(first))
+	res := httptest.NewRecorder()
+	app.postDCSpeedOverview(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected first DC report 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	second := `{
+		"service_key":"telegram-saver",
+		"generated_at":"2026-07-24T12:05:00Z",
+		"retention_days":30,
+		"max_samples_per_dc":200,
+		"min_bytes":5242880,
+		"min_duration_ms":2000,
+		"dcs":[
+			{"dc_id":5,"sample_count":5,"excluded_count":0,"failure_count":1,"total_bytes":1000,"total_duration_ms":50,"average_speed":20,"median_speed":20,"peak_speed":24,"last_speed":22,"last_updated_at":"2026-07-24T12:04:30Z"}
+		]
+	}`
+	req = httptest.NewRequest(http.MethodPost, "/api/dc-download-stats", strings.NewReader(second))
+	res = httptest.NewRecorder()
+	app.postDCSpeedOverview(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected replacement DC report 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	overview, err := app.dcSpeedOverviewByService("telegram-saver")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview == nil {
+		t.Fatal("expected persisted DC overview")
+	}
+	if overview.GeneratedAt != "2026-07-24T12:05:00Z" {
+		t.Fatalf("generated_at = %q", overview.GeneratedAt)
+	}
+	if len(overview.DCs) != 1 || overview.DCs[0].DCID != 5 {
+		t.Fatalf("unexpected replaced DC rows: %+v", overview.DCs)
+	}
+	if overview.DCs[0].SampleCount != 5 || overview.DCs[0].LastSpeed != 22 {
+		t.Fatalf("unexpected DC5 aggregate: %+v", overview.DCs[0])
+	}
+}

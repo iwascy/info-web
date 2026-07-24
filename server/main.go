@@ -179,22 +179,47 @@ type File struct {
 
 // ServerTraffic is monthly public-interface usage reported by agents (e.g. vnstat).
 type ServerTraffic struct {
-	ID          int64    `json:"id"`
-	ServerKey   string   `json:"server_key"`
-	ServerName  string   `json:"server_name"`
-	Provider    *string  `json:"provider"`
-	Region      *string  `json:"region"`
-	Interface   string   `json:"interface"`
-	Period      string   `json:"period"`
-	RxBytes     int64    `json:"rx_bytes"`
-	TxBytes     int64    `json:"tx_bytes"`
-	TotalBytes  int64    `json:"total_bytes"`
-	QuotaBytes  int64    `json:"quota_bytes"`
-	UsagePct    *float64 `json:"usage_pct"`
-	Source      string   `json:"source"`
-	SampledAt   string   `json:"sampled_at"`
-	UpdatedAt   string   `json:"updated_at"`
-	Note        *string  `json:"note"`
+	ID         int64    `json:"id"`
+	ServerKey  string   `json:"server_key"`
+	ServerName string   `json:"server_name"`
+	Provider   *string  `json:"provider"`
+	Region     *string  `json:"region"`
+	Interface  string   `json:"interface"`
+	Period     string   `json:"period"`
+	RxBytes    int64    `json:"rx_bytes"`
+	TxBytes    int64    `json:"tx_bytes"`
+	TotalBytes int64    `json:"total_bytes"`
+	QuotaBytes int64    `json:"quota_bytes"`
+	UsagePct   *float64 `json:"usage_pct"`
+	Source     string   `json:"source"`
+	SampledAt  string   `json:"sampled_at"`
+	UpdatedAt  string   `json:"updated_at"`
+	Note       *string  `json:"note"`
+}
+
+type DCSpeedStat struct {
+	DCID            int    `json:"dc_id"`
+	SampleCount     int    `json:"sample_count"`
+	ExcludedCount   int    `json:"excluded_count"`
+	FailureCount    int    `json:"failure_count"`
+	TotalBytes      int64  `json:"total_bytes"`
+	TotalDurationMS int64  `json:"total_duration_ms"`
+	AverageSpeed    int64  `json:"average_speed"`
+	MedianSpeed     int64  `json:"median_speed"`
+	PeakSpeed       int64  `json:"peak_speed"`
+	LastSpeed       int64  `json:"last_speed"`
+	LastUpdatedAt   string `json:"last_updated_at"`
+}
+
+type DCSpeedOverview struct {
+	ServiceKey      string        `json:"service_key"`
+	GeneratedAt     string        `json:"generated_at"`
+	RetentionDays   int           `json:"retention_days"`
+	MaxSamplesPerDC int           `json:"max_samples_per_dc"`
+	MinBytes        int64         `json:"min_bytes"`
+	MinDurationMS   int64         `json:"min_duration_ms"`
+	ReportedAt      string        `json:"reported_at"`
+	DCs             []DCSpeedStat `json:"dcs"`
 }
 
 func main() {
@@ -232,6 +257,7 @@ func main() {
 		r.With(app.ingestAuth).Post("/heartbeat", app.postHeartbeat)
 		r.With(app.ingestAuth).Post("/progress", app.postProgress)
 		r.With(app.ingestAuth).Post("/server-traffic", app.postServerTraffic)
+		r.With(app.ingestAuth).Post("/dc-download-stats", app.postDCSpeedOverview)
 		r.With(app.panelAuth).Get("/server-traffic", app.getServerTraffic)
 		r.With(app.panelAuth).Get("/dashboard", app.getDashboard)
 		r.With(app.panelAuth).Get("/services", app.getServices)
@@ -429,9 +455,34 @@ CREATE TABLE IF NOT EXISTS server_traffic (
   note TEXT,
   UNIQUE(server_key, interface, period)
 );
+CREATE TABLE IF NOT EXISTS dc_speed_overviews (
+  service_key TEXT PRIMARY KEY,
+  generated_at TEXT NOT NULL,
+  retention_days INTEGER NOT NULL,
+  max_samples_per_dc INTEGER NOT NULL,
+  min_bytes INTEGER NOT NULL,
+  min_duration_ms INTEGER NOT NULL,
+  reported_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS dc_speed_stats (
+  service_key TEXT NOT NULL,
+  dc_id INTEGER NOT NULL,
+  sample_count INTEGER NOT NULL,
+  excluded_count INTEGER NOT NULL,
+  failure_count INTEGER NOT NULL,
+  total_bytes INTEGER NOT NULL,
+  total_duration_ms INTEGER NOT NULL,
+  average_speed INTEGER NOT NULL,
+  median_speed INTEGER NOT NULL,
+  peak_speed INTEGER NOT NULL,
+  last_speed INTEGER NOT NULL,
+  last_updated_at TEXT NOT NULL,
+  PRIMARY KEY(service_key, dc_id)
+);
 CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status, triggered_at DESC);
 CREATE INDEX IF NOT EXISTS idx_server_traffic_period ON server_traffic(period DESC, total_bytes DESC);
+CREATE INDEX IF NOT EXISTS idx_dc_speed_stats_service ON dc_speed_stats(service_key, dc_id);
 `)
 	if err != nil {
 		return err
@@ -820,6 +871,91 @@ func (a *App) getServerTraffic(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, rows)
 }
 
+func (a *App) postDCSpeedOverview(w http.ResponseWriter, r *http.Request) {
+	var p DCSpeedOverview
+	if !decode(w, r, &p) {
+		return
+	}
+	p.ServiceKey = strings.TrimSpace(p.ServiceKey)
+	if p.ServiceKey == "" {
+		writeErr(w, http.StatusBadRequest, "service_key is required")
+		return
+	}
+	if p.GeneratedAt == "" {
+		p.GeneratedAt = time.Now().Format(time.RFC3339)
+	}
+	if p.RetentionDays < 0 || p.MaxSamplesPerDC < 0 || p.MinBytes < 0 || p.MinDurationMS < 0 {
+		writeErr(w, http.StatusBadRequest, "retention and sample thresholds must be non-negative")
+		return
+	}
+	for _, dc := range p.DCs {
+		if dc.DCID <= 0 ||
+			dc.SampleCount < 0 ||
+			dc.ExcludedCount < 0 ||
+			dc.FailureCount < 0 ||
+			dc.TotalBytes < 0 ||
+			dc.TotalDurationMS < 0 ||
+			dc.AverageSpeed < 0 ||
+			dc.MedianSpeed < 0 ||
+			dc.PeakSpeed < 0 ||
+			dc.LastSpeed < 0 {
+			writeErr(w, http.StatusBadRequest, "DC statistics must use a positive dc_id and non-negative metrics")
+			return
+		}
+	}
+	if err := a.ensureService(p.ServiceKey, p.ServiceKey, "sync"); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`INSERT INTO dc_speed_overviews(
+service_key,generated_at,retention_days,max_samples_per_dc,min_bytes,min_duration_ms,reported_at)
+VALUES(?,?,?,?,?,?,?)
+ON CONFLICT(service_key) DO UPDATE SET
+generated_at=excluded.generated_at,retention_days=excluded.retention_days,
+max_samples_per_dc=excluded.max_samples_per_dc,min_bytes=excluded.min_bytes,
+min_duration_ms=excluded.min_duration_ms,reported_at=excluded.reported_at`,
+		p.ServiceKey, p.GeneratedAt, p.RetentionDays, p.MaxSamplesPerDC, p.MinBytes, p.MinDurationMS, now)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err = tx.Exec("DELETE FROM dc_speed_stats WHERE service_key=?", p.ServiceKey); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, dc := range p.DCs {
+		if _, err = tx.Exec(`INSERT INTO dc_speed_stats(
+service_key,dc_id,sample_count,excluded_count,failure_count,total_bytes,total_duration_ms,
+average_speed,median_speed,peak_speed,last_speed,last_updated_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+			p.ServiceKey, dc.DCID, dc.SampleCount, dc.ExcludedCount, dc.FailureCount,
+			dc.TotalBytes, dc.TotalDurationMS, dc.AverageSpeed, dc.MedianSpeed,
+			dc.PeakSpeed, dc.LastSpeed, dc.LastUpdatedAt); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	p.ReportedAt = now
+	if p.DCs == nil {
+		p.DCs = []DCSpeedStat{}
+	}
+	writeJSON(w, p)
+}
+
 func (a *App) getServices(w http.ResponseWriter, r *http.Request) {
 	services, err := a.listServices()
 	if err != nil {
@@ -905,11 +1041,19 @@ func (a *App) getService(w http.ResponseWriter, r *http.Request) {
 	}
 	events, _ := a.listEvents("service_key", key, "", 40)
 	tasks, _ := a.tasksByService(key)
-	writeJSON(w, map[string]any{"service": s, "events": events, "sync_tasks": tasks})
+	dcDownloadStats, _ := a.dcSpeedOverviewByService(key)
+	writeJSON(w, map[string]any{
+		"service":           s,
+		"events":            events,
+		"sync_tasks":        tasks,
+		"dc_download_stats": dcDownloadStats,
+	})
 }
 
 func (a *App) deleteService(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
+	_, _ = a.db.Exec("DELETE FROM dc_speed_stats WHERE service_key=?", key)
+	_, _ = a.db.Exec("DELETE FROM dc_speed_overviews WHERE service_key=?", key)
 	_, _ = a.db.Exec("DELETE FROM services WHERE service_key=?", key)
 	writeJSON(w, map[string]any{"ok": true})
 }
@@ -1069,6 +1213,39 @@ func (a *App) serviceByKey(key string) (Service, error) {
 	err := a.db.QueryRow(`SELECT id,service_key,name,type,status,message,last_heartbeat_at,last_progress_at,heartbeat_timeout_sec,created_at FROM services WHERE service_key=?`, key).
 		Scan(&s.ID, &s.ServiceKey, &s.Name, &s.Type, &s.Status, &s.Message, &s.LastHeartbeatAt, &s.LastProgressAt, &s.HeartbeatTimeoutSec, &s.CreatedAt)
 	return s, err
+}
+
+func (a *App) dcSpeedOverviewByService(serviceKey string) (*DCSpeedOverview, error) {
+	var overview DCSpeedOverview
+	err := a.db.QueryRow(`SELECT service_key,generated_at,retention_days,max_samples_per_dc,
+min_bytes,min_duration_ms,reported_at FROM dc_speed_overviews WHERE service_key=?`, serviceKey).
+		Scan(&overview.ServiceKey, &overview.GeneratedAt, &overview.RetentionDays,
+			&overview.MaxSamplesPerDC, &overview.MinBytes, &overview.MinDurationMS, &overview.ReportedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := a.db.Query(`SELECT dc_id,sample_count,excluded_count,failure_count,total_bytes,
+total_duration_ms,average_speed,median_speed,peak_speed,last_speed,last_updated_at
+FROM dc_speed_stats WHERE service_key=? ORDER BY dc_id`, serviceKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	overview.DCs = []DCSpeedStat{}
+	for rows.Next() {
+		var dc DCSpeedStat
+		if err := rows.Scan(&dc.DCID, &dc.SampleCount, &dc.ExcludedCount, &dc.FailureCount,
+			&dc.TotalBytes, &dc.TotalDurationMS, &dc.AverageSpeed, &dc.MedianSpeed,
+			&dc.PeakSpeed, &dc.LastSpeed, &dc.LastUpdatedAt); err != nil {
+			return nil, err
+		}
+		overview.DCs = append(overview.DCs, dc)
+	}
+	return &overview, rows.Err()
 }
 
 func (a *App) listTasks(detail bool) ([]SyncTask, error) {

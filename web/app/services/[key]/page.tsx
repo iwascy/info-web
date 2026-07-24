@@ -6,12 +6,17 @@ import Link from "next/link";
 import { Shell } from "@/components/Shell";
 import { Badge, EmptyState, JsonBlock, MetricCard, PageStack, Progress, ServiceCell, Speed } from "@/components/UI";
 import { fetcher } from "@/lib/api";
-import { fmtCompact, fmtRelative, fmtTime, STATUS_LABEL } from "@/lib/format";
-import type { EventRecord, Service, SyncTask } from "@/lib/types";
+import { fmtBytes, fmtCompact, fmtNumber, fmtRelative, fmtTime, STATUS_LABEL } from "@/lib/format";
+import type { DCSpeedOverview, EventRecord, Service, SyncTask } from "@/lib/types";
 
 export default function ServiceDetailPage() {
   const { key } = useParams<{ key: string }>();
-  const { data, error } = useSWR<{ service: Service; events: EventRecord[]; sync_tasks: SyncTask[] }>(`/api/services/${key}`, fetcher, {
+  const { data, error } = useSWR<{
+    service: Service;
+    events: EventRecord[];
+    sync_tasks: SyncTask[];
+    dc_download_stats: DCSpeedOverview | null;
+  }>(`/api/services/${key}`, fetcher, {
     refreshInterval: 10000
   });
   if (error) notFound();
@@ -43,6 +48,58 @@ export default function ServiceDetailPage() {
           <MetricCard label="最近心跳" value={fmtRelative(s?.last_heartbeat_at)} tone="green" />
           <MetricCard label="关联任务" value={data?.sync_tasks?.length ?? "—"} tone="purple" />
         </div>
+
+        {data?.dc_download_stats ? (
+          <div className="card card-pad">
+            <div className="card-head">
+              <div>
+                <h3>Telegram DC 下载速度</h3>
+                <span className="sub">
+                  最近 {data.dc_download_stats.retention_days} 天 · 至少 {fmtBytes(data.dc_download_stats.min_bytes)} /{" "}
+                  {data.dc_download_stats.min_duration_ms / 1000} 秒的成功下载计入速度
+                </span>
+              </div>
+              <span className="spacer" />
+              <span className="sub">上报于 {fmtRelative(data.dc_download_stats.reported_at)}</span>
+            </div>
+            {data.dc_download_stats.dcs.length ? (
+              <div className="table-wrap">
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>数据中心</th>
+                      <th className="num">平均速度</th>
+                      <th className="num">中位速度</th>
+                      <th className="num">最近速度</th>
+                      <th className="num">峰值速度</th>
+                      <th className="num">有效 / 排除 / 失败</th>
+                      <th className="num">有效流量</th>
+                      <th>最近样本</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.dc_download_stats.dcs.map((dc) => (
+                      <tr key={dc.dc_id}>
+                        <td><strong>DC{dc.dc_id}</strong></td>
+                        <td className="num"><Speed value={dc.average_speed} arrow="down" /></td>
+                        <td className="num"><Speed value={dc.median_speed} arrow="down" /></td>
+                        <td className="num"><Speed value={dc.last_speed} arrow="down" /></td>
+                        <td className="num"><Speed value={dc.peak_speed} arrow="down" /></td>
+                        <td className="num mono">
+                          {fmtNumber(dc.sample_count)} / {fmtNumber(dc.excluded_count)} / {fmtNumber(dc.failure_count)}
+                        </td>
+                        <td className="num nowrap">{fmtBytes(dc.total_bytes)}</td>
+                        <td className="text-muted nowrap">{fmtRelative(dc.last_updated_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyState description="尚未采集到 DC 下载样本" />
+            )}
+          </div>
+        ) : null}
 
         <div className="cols-12">
           <div className="span-5 card card-pad">
