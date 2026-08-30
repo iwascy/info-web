@@ -3,12 +3,14 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { Copy, RotateCcw } from "lucide-react";
+import { useRefreshSettings } from "@/components/AppProviders";
 import { Shell } from "@/components/Shell";
 import { PageStack } from "@/components/UI";
 import { apiPost, apiPut, fetcher } from "@/lib/api";
 
 export default function SettingsPage() {
   const { data, mutate } = useSWR<Record<string, string>>("/api/settings", fetcher);
+  const refresh = useRefreshSettings();
   const [form, setForm] = useState({ service_key: "", name: "", type: "sync" });
   const [message, setMessage] = useState("");
 
@@ -29,7 +31,6 @@ export default function SettingsPage() {
   }
 
   const token = data?.token || "";
-  const autoRefresh = data?.auto_refresh !== "false";
   const alertSound = data?.alert_sound === "true";
 
   return (
@@ -107,8 +108,8 @@ export default function SettingsPage() {
                   <input
                     id="auto_refresh_setting"
                     type="checkbox"
-                    checked={autoRefresh}
-                    onChange={(e) => updateSetting("auto_refresh", e.target.checked)}
+                    checked={refresh.enabled}
+                    onChange={(e) => refresh.setEnabled(e.target.checked)}
                   />
                   <span className="track" />
                   <span className="thumb" />

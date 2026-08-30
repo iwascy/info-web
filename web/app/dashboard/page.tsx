@@ -4,17 +4,18 @@ import Link from "next/link";
 import useSWR from "swr";
 import { ArrowRight } from "lucide-react";
 import { Shell } from "@/components/Shell";
-import { Badge, EmptyState, MetricCard, PageStack, Progress, ServiceCell, TypeTag } from "@/components/UI";
+import { Badge, EmptyState, MetricCard, PageLoading, PageStack, Progress, ServiceCell, TypeTag } from "@/components/UI";
 import { Donut, Sparkline } from "@/components/Charts";
 import { fetcher } from "@/lib/api";
 import { fmtBytes, fmtCompact, fmtRelative, statusTone } from "@/lib/format";
+import { serviceHref, syncTaskHref } from "@/lib/routes";
 import type { Dashboard } from "@/lib/types";
 
 /** 总览页「最近告警」最多展示条数，避免列表过长撑高整页 */
 const RECENT_ALERTS_LIMIT = 5;
 
 export default function DashboardPage() {
-  const { data } = useSWR<Dashboard>("/api/dashboard", fetcher, { refreshInterval: 10000 });
+  const { data, isLoading } = useSWR<Dashboard>("/api/dashboard", fetcher);
   const d = data;
   const uptime = d?.uptime_pct == null ? "—" : `${d.uptime_pct}%`;
   const traffic = d?.server_traffic || [];
@@ -31,6 +32,14 @@ export default function DashboardPage() {
   const healthySeries = d?.services?.map((_, i, xs) => xs.slice(0, i + 1).filter((s) => s.status === "healthy").length);
   const errorSeries = d?.services?.map((_, i, xs) => xs.slice(0, i + 1).filter((s) => s.status === "error").length);
   const alertSeries = d?.alerts?.map((_, i) => i + 1);
+
+  if (isLoading) {
+    return (
+      <Shell title="总览" subtitle="正在读取服务与任务状态">
+        <PageLoading label="正在加载总览" />
+      </Shell>
+    );
+  }
 
   return (
     <Shell title="总览" subtitle="我的服务现在还活着吗？同步任务进行到哪了？">
@@ -61,7 +70,7 @@ export default function DashboardPage() {
             series={healthySeries}
           />
           <MetricCard label="异常服务" value={d?.error ?? "—"} note={<span className="t-red">需要立即处理</span>} tone="red" icon="alert" series={errorSeries} />
-          <MetricCard label="今日告警" value={d?.today_alerts ?? "—"} note={`${d?.alerts?.length || 0} 条触发中`} tone="yellow" icon="alert" series={alertSeries} />
+          <MetricCard label="今日告警" value={d?.today_alerts ?? "—"} note={`${d?.firing_alerts ?? d?.alerts?.length ?? 0} 条触发中`} tone="yellow" icon="alert" series={alertSeries} />
         </div>
 
         {hasTraffic ? (
@@ -245,7 +254,7 @@ export default function DashboardPage() {
                     {d.services.map((s) => (
                       <tr key={s.service_key} className={s.status === "error" ? "row-error" : ""}>
                         <td>
-                          <ServiceCell href={`/services/${s.service_key}`} name={s.name} sub={s.service_key} type={s.type} />
+                          <ServiceCell href={serviceHref(s.service_key)} name={s.name} sub={s.service_key} type={s.type} />
                         </td>
                         <td>
                           <TypeTag type={s.type} />
@@ -285,7 +294,7 @@ export default function DashboardPage() {
               </div>
               {d?.sync_tasks?.length ? (
                 d.sync_tasks.slice(0, 5).map((t) => (
-                  <Link key={t.task_id} href={`/sync/${t.task_id}`} className="task-row">
+                  <Link key={t.task_id} href={syncTaskHref(t.task_id)} className="task-row">
                     <div className="row">
                       <span className="font-semibold truncate-1">{t.name}</span>
                       <span className="spacer" />

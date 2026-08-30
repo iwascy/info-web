@@ -4,23 +4,30 @@ import useSWR from "swr";
 import { notFound, useParams } from "next/navigation";
 import Link from "next/link";
 import { Shell } from "@/components/Shell";
-import { Badge, EmptyState, JsonBlock, MetricCard, PageStack, Progress, ServiceCell, Speed } from "@/components/UI";
+import { Badge, EmptyState, JsonBlock, MetricCard, PageLoading, PageStack, Progress, ServiceCell, Speed } from "@/components/UI";
 import { fetcher } from "@/lib/api";
 import { fmtBytes, fmtCompact, fmtNumber, fmtRelative, fmtTime, STATUS_LABEL } from "@/lib/format";
+import { syncTaskHref } from "@/lib/routes";
 import type { DCSpeedOverview, EventRecord, Service, SyncTask } from "@/lib/types";
 
 export default function ServiceDetailPage() {
   const { key } = useParams<{ key: string }>();
-  const { data, error } = useSWR<{
+  const { data, error, isLoading } = useSWR<{
     service: Service;
     events: EventRecord[];
     sync_tasks: SyncTask[];
     dc_download_stats: DCSpeedOverview | null;
-  }>(`/api/services/${key}`, fetcher, {
-    refreshInterval: 10000
-  });
+  }>(`/api/services/${key}`, fetcher);
   if (error) notFound();
   const s = data?.service;
+
+  if (isLoading) {
+    return (
+      <Shell title="服务详情" subtitle="正在读取服务状态">
+        <PageLoading label="正在加载服务详情" />
+      </Shell>
+    );
+  }
 
   return (
     <Shell title={s?.name || "服务详情"} subtitle={s ? `${s.service_key} · ${s.type}` : "加载中"}>
@@ -108,7 +115,7 @@ export default function ServiceDetailPage() {
             </div>
             {data?.sync_tasks?.length ? (
               data.sync_tasks.map((t) => (
-                <Link key={t.task_id} href={`/sync/${t.task_id}`} className="task-row">
+                <Link key={t.task_id} href={syncTaskHref(t.task_id)} className="task-row">
                   <div className="row">
                     <span className="font-semibold truncate-1">{t.name}</span>
                     <span className="spacer" />

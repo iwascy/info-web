@@ -1,5 +1,17 @@
 export type ServiceStatus = "healthy" | "running" | "warning" | "error" | "unknown" | "paused";
-export type TaskStatus = "running" | "success" | "error" | "paused" | "warning" | "retry_waiting";
+export type TaskStatus = "running" | "stale" | "success" | "error" | "paused" | "warning" | "retry_waiting";
+
+export interface PageResponse<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  counts: Record<string, number>;
+}
+
+export interface CountResponse {
+  count: number;
+}
 
 export interface Service {
   id: number;
@@ -149,6 +161,7 @@ export interface Dashboard {
   unknown: number;
   paused: number;
   today_alerts: number;
+  firing_alerts?: number;
   today_completed_tasks: number;
   total_synced_bytes: number;
   uptime_pct: number | null;

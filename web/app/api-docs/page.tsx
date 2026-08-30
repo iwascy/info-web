@@ -23,7 +23,33 @@ export default function ApiDocsPage() {
   -H "Authorization: Bearer ${token}" \\
   -H "Content-Type: application/json" \\
   -d '{"server_key":"oracle-singapore-2","server_name":"甲骨文新加坡2号机","provider":"oracle","region":"sg","interface":"enp0s6","period":"2026-07","rx_bytes":984671648,"tx_bytes":1550730691,"quota_bytes":10995116277760,"source":"vnstat","sampled_at":"2026-07-08T10:45:00Z"}'`;
-  const endpoints = ["POST /api/heartbeat", "POST /api/progress", "GET /api/server-traffic", "POST /api/server-traffic", "GET /api/dashboard", "GET /api/services", "POST /api/services", "GET /api/services/{key}", "DELETE /api/services/{key}", "GET /api/sync-tasks", "GET /api/sync-tasks/{id}", "POST /api/sync-tasks/{id}/pause", "POST /api/sync-tasks/{id}/resume", "GET /api/alerts", "POST /api/alerts/resolve-all", "POST /api/alerts/{id}/resolve", "POST /api/alerts/{id}/mute", "GET /api/events?type=&q=&limit=", "GET /api/settings", "PUT /api/settings", "POST /api/token/reset"];
+  const endpoints = [
+    "POST /api/heartbeat",
+    "POST /api/progress",
+    "GET /api/server-traffic",
+    "POST /api/server-traffic",
+    "GET /api/dashboard",
+    "GET /api/services",
+    "POST /api/services",
+    "GET /api/services/{key}",
+    "DELETE /api/services/{key}",
+    "GET /api/sync-tasks",
+    "GET /api/sync-tasks/page?filter=&q=&page=&page_size=",
+    "GET /api/sync-tasks/{id}",
+    "POST /api/sync-tasks/{id}/pause",
+    "POST /api/sync-tasks/{id}/resume",
+    "POST /api/pikpak-115/full-check",
+    "GET /api/alerts",
+    "GET /api/alerts/page?filter=&page=&page_size=",
+    "GET /api/alerts/count?status=firing",
+    "POST /api/alerts/resolve-all",
+    "POST /api/alerts/{id}/resolve",
+    "POST /api/alerts/{id}/mute",
+    "GET /api/events?type=&q=&limit=",
+    "GET /api/settings",
+    "PUT /api/settings",
+    "POST /api/token/reset"
+  ];
   const aiPrompt = useMemo(() => buildAiPrompt(API_BASE, token), [token]);
 
   async function copyAiPrompt() {

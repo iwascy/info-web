@@ -3,7 +3,7 @@
 import { useParams } from "next/navigation";
 import useSWR from "swr";
 import { Shell } from "@/components/Shell";
-import { Badge, EmptyState, JsonBlock, MetricCard, PageStack, Progress, Speed } from "@/components/UI";
+import { Badge, EmptyState, JsonBlock, MetricCard, PageLoading, PageStack, Progress, Speed } from "@/components/UI";
 import { DualLine, LineChart } from "@/components/Charts";
 import { fetcher } from "@/lib/api";
 import { fmtBytes, fmtCompact, fmtRelative, fmtTime } from "@/lib/format";
@@ -11,12 +11,20 @@ import type { SyncTask } from "@/lib/types";
 
 export default function SyncDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { data: t } = useSWR<SyncTask>(`/api/sync-tasks/${id}`, fetcher, { refreshInterval: 10000 });
+  const { data: t, isLoading } = useSWR<SyncTask>(`/api/sync-tasks/${id}`, fetcher);
   const stage = t?.current_stage || t?.stage || "—";
   const byteProgress = t?.total_bytes ? ((t?.done_bytes || 0) / t.total_bytes) * 100 : null;
   const hasDualSeries = Boolean(t?.download_series?.length || t?.upload_series?.length);
   const hasRetry = t?.attempt != null || t?.max_attempts != null || t?.retry_count != null || t?.dead_letter != null;
   const retryValue = t?.max_attempts != null ? `${t?.attempt || 0}/${t.max_attempts}` : t?.retry_count != null ? t.retry_count : "—";
+
+  if (isLoading) {
+    return (
+      <Shell title="同步详情" subtitle="正在读取任务状态">
+        <PageLoading label="正在加载同步详情" />
+      </Shell>
+    );
+  }
 
   return (
     <Shell title={t?.name || "同步详情"} subtitle={t ? `${t.service_key} · ${t.task_id}` : "加载中"}>

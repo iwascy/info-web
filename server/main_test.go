@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/go-chi/chi/v5"
 	_ "modernc.org/sqlite"
 )
 
@@ -443,4 +446,291 @@ func TestDCSpeedOverviewReplacesServiceSnapshot(t *testing.T) {
 	if overview.DCs[0].SampleCount != 5 || overview.DCs[0].LastSpeed != 22 {
 		t.Fatalf("unexpected DC5 aggregate: %+v", overview.DCs[0])
 	}
+}
+
+func TestSyncTasksPageFiltersAndPaginates(t *testing.T) {
+	app := newTestApp(t)
+	now := time.Now()
+	for i, task := range []struct {
+		status    string
+		updatedAt time.Time
+	}{
+		{"running", now},
+		{"error", now},
+		{"success", now},
+		{"success", now.Add(-24 * time.Hour)},
+		{"success", now.Add(-48 * time.Hour)},
+		{"success", now.Add(-6 * 24 * time.Hour)},
+		{"success", now.Add(-8 * 24 * time.Hour)},
+	} {
+		_, err := app.db.Exec(`INSERT INTO sync_tasks(service_key,task_id,name,status,updated_at) VALUES(?,?,?,?,?)`,
+			"svc-page", "task-page-"+strconv.Itoa(i), "Task "+strconv.Itoa(i), task.status, task.updatedAt.Format(time.RFC3339))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sync-tasks/page?page_size=2", nil)
+	res := httptest.NewRecorder()
+	app.getSyncTasksPage(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+	var payload struct {
+		Items    []SyncTask     `json:"items"`
+		Total    int            `json:"total"`
+		Page     int            `json:"page"`
+		PageSize int            `json:"page_size"`
+		Counts   map[string]int `json:"counts"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Items) != 2 || payload.Total != 6 || payload.Page != 1 || payload.PageSize != 2 {
+		t.Fatalf("unexpected current page: %+v", payload)
+	}
+	if payload.Counts["all"] != 7 || payload.Counts["current"] != 6 || payload.Counts["success"] != 5 {
+		t.Fatalf("unexpected task counts: %#v", payload.Counts)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/sync-tasks/page?filter=success&q=task+4&page_size=999", nil)
+	res = httptest.NewRecorder()
+	app.getSyncTasksPage(res, req)
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Total != 1 || len(payload.Items) != 1 || payload.Items[0].TaskID != "task-page-4" {
+		t.Fatalf("unexpected searched page: %+v", payload)
+	}
+	if payload.PageSize != maximumPageSize {
+		t.Fatalf("page_size = %d, want %d", payload.PageSize, maximumPageSize)
+	}
+}
+
+func TestRunningTaskBecomesStaleAndProgressRecovers(t *testing.T) {
+	app := newTestApp(t)
+	old := time.Now().Add(-staleTaskAfter - time.Minute).Format(time.RFC3339)
+	_, err := app.db.Exec(`INSERT INTO sync_tasks(service_key,task_id,name,status,updated_at,total,failed) VALUES(?,?,?,?,?,?,?)`,
+		"svc-stale", "task-stale", "Stale task", "running", old, 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app.checkAlerts()
+	app.checkAlerts()
+	var status string
+	if err := app.db.QueryRow("SELECT status FROM sync_tasks WHERE task_id='task-stale'").Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "stale" {
+		t.Fatalf("status = %q, want stale", status)
+	}
+	var alertCount int
+	if err := app.db.QueryRow("SELECT COUNT(*) FROM alerts WHERE task_id='task-stale' AND title=? AND status='firing'", staleTaskAlertTitle).Scan(&alertCount); err != nil {
+		t.Fatal(err)
+	}
+	if alertCount != 1 {
+		t.Fatalf("stale firing alerts = %d, want 1", alertCount)
+	}
+	router := chi.NewRouter()
+	router.Post("/api/sync-tasks/{id}/resume", app.resumeTask)
+	resumeReq := httptest.NewRequest(http.MethodPost, "/api/sync-tasks/task-stale/resume", nil)
+	resumeRes := httptest.NewRecorder()
+	router.ServeHTTP(resumeRes, resumeReq)
+	if resumeRes.Code != http.StatusConflict {
+		t.Fatalf("stale resume status = %d, want 409", resumeRes.Code)
+	}
+	if err := app.db.QueryRow("SELECT status FROM sync_tasks WHERE task_id='task-stale'").Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "stale" {
+		t.Fatalf("status after rejected resume = %q, want stale", status)
+	}
+
+	body := `{"service_key":"svc-stale","task_id":"task-stale","name":"Stale task","status":"running","progress":50}`
+	req := httptest.NewRequest(http.MethodPost, "/api/progress", strings.NewReader(body))
+	res := httptest.NewRecorder()
+	app.postProgress(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("progress expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+	if err := app.db.QueryRow("SELECT status FROM sync_tasks WHERE task_id='task-stale'").Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "running" {
+		t.Fatalf("recovered status = %q, want running", status)
+	}
+	if err := app.db.QueryRow("SELECT COUNT(*) FROM alerts WHERE task_id='task-stale' AND title=? AND status='firing'", staleTaskAlertTitle).Scan(&alertCount); err != nil {
+		t.Fatal(err)
+	}
+	if alertCount != 0 {
+		t.Fatalf("stale firing alerts after progress = %d, want 0", alertCount)
+	}
+}
+
+func TestAlertsPageAndCount(t *testing.T) {
+	app := newTestApp(t)
+	now := time.Now().Format(time.RFC3339)
+	for _, alert := range []struct {
+		status, severity string
+	}{
+		{"firing", "high"},
+		{"firing", "medium"},
+		{"firing", "low"},
+		{"resolved", "high"},
+		{"muted", "low"},
+	} {
+		_, err := app.db.Exec(`INSERT INTO alerts(service_key,severity,title,message,status,triggered_at) VALUES(?,?,?,?,?,?)`,
+			"svc-alert", alert.severity, alert.status+alert.severity, "message", alert.status, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/alerts/page?filter=status&status=firing&page_size=2", nil)
+	res := httptest.NewRecorder()
+	app.getAlertsPage(res, req)
+	var page struct {
+		Items    []Alert        `json:"items"`
+		Total    int            `json:"total"`
+		PageSize int            `json:"page_size"`
+		Counts   map[string]int `json:"counts"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	if res.Code != http.StatusOK || len(page.Items) != 2 || page.Total != 3 || page.Counts["all"] != 5 || page.Counts["high"] != 2 {
+		t.Fatalf("unexpected alerts page: code=%d payload=%+v", res.Code, page)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/alerts/count", nil)
+	res = httptest.NewRecorder()
+	app.getAlertsCount(res, req)
+	var count struct {
+		Count  int            `json:"count"`
+		Counts map[string]int `json:"counts"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count.Count != 3 || count.Counts["resolved"] != 1 || count.Counts["muted"] != 1 {
+		t.Fatalf("unexpected alert count response: %+v", count)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/alerts/count?status=resolved", nil)
+	res = httptest.NewRecorder()
+	app.getAlertsCount(res, req)
+	if err := json.NewDecoder(res.Body).Decode(&count); err != nil {
+		t.Fatal(err)
+	}
+	if res.Code != http.StatusOK || count.Count != 1 {
+		t.Fatalf("resolved alert count: code=%d payload=%+v", res.Code, count)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/alerts/count?status=invalid", nil)
+	res = httptest.NewRecorder()
+	app.getAlertsCount(res, req)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("invalid alert count status code = %d, want 400", res.Code)
+	}
+}
+
+func TestDashboardLimitsRowsAndUsesTodayCounts(t *testing.T) {
+	app := newTestApp(t)
+	now := time.Now()
+	old := now.Add(-48 * time.Hour)
+	for i := 0; i < 8; i++ {
+		updatedAt := now
+		if i >= 6 {
+			updatedAt = old
+		}
+		_, err := app.db.Exec(`INSERT INTO sync_tasks(service_key,task_id,name,status,updated_at) VALUES(?,?,?,?,?)`,
+			"svc-dashboard", "dashboard-task-"+strconv.Itoa(i), "Dashboard task", "success", updatedAt.Format(time.RFC3339))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 9; i++ {
+		triggeredAt := now
+		if i >= 7 {
+			triggeredAt = old
+		}
+		_, err := app.db.Exec(`INSERT INTO alerts(service_key,severity,title,message,status,triggered_at) VALUES(?,?,?,?,?,?)`,
+			"svc-dashboard", "medium", "Dashboard alert "+strconv.Itoa(i), "message", "firing", triggeredAt.Format(time.RFC3339))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	res := httptest.NewRecorder()
+	app.getDashboard(res, httptest.NewRequest(http.MethodGet, "/api/dashboard", nil))
+	var payload struct {
+		TodayAlerts        int        `json:"today_alerts"`
+		FiringAlerts       int        `json:"firing_alerts"`
+		TodayCompletedTask int        `json:"today_completed_tasks"`
+		Tasks              []SyncTask `json:"sync_tasks"`
+		Alerts             []Alert    `json:"alerts"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.TodayAlerts != 7 || payload.FiringAlerts != 9 || payload.TodayCompletedTask != 6 {
+		t.Fatalf("unexpected dashboard counts: %+v", payload)
+	}
+	if len(payload.Tasks) != 5 || len(payload.Alerts) != 5 {
+		t.Fatalf("dashboard row limits = %d tasks/%d alerts, want 5/5", len(payload.Tasks), len(payload.Alerts))
+	}
+}
+
+func TestPikpakFullCheckCommandAndBaseURL(t *testing.T) {
+	t.Setenv("PIKPAK115_OPSPILOT_BASE_URL", "https://panel.example/api/")
+	if got := localOpsPilotBaseURL(); got != "https://panel.example/api" {
+		t.Fatalf("base URL = %q", got)
+	}
+	t.Setenv("PIKPAK115_OPSPILOT_BASE_URL", "")
+	t.Setenv("OPSPILOT_ADDR", "0.0.0.0:9090")
+	if got := localOpsPilotBaseURL(); got != "http://127.0.0.1:9090" {
+		t.Fatalf("local base URL = %q", got)
+	}
+	t.Setenv("PIKPAK115_BIN", "/opt/custom/pikpak-to-115")
+	t.Setenv("PIKPAK115_ENV_FILE", "/etc/pikpak/custom.env")
+	cmd := pikpak115FullCheckCommand(localOpsPilotBaseURL(), "test-token")
+	wantArgs := []string{"/opt/custom/pikpak-to-115", "--env-file", "/etc/pikpak/custom.env", "full-check"}
+	if strings.Join(cmd.Args, "\x00") != strings.Join(wantArgs, "\x00") {
+		t.Fatalf("full-check argv = %#v, want %#v", cmd.Args, wantArgs)
+	}
+	joinedEnv := strings.Join(cmd.Env, "\n")
+	if !strings.Contains(joinedEnv, "OPSPILOT_BASE_URL=http://127.0.0.1:9090") || !strings.Contains(joinedEnv, "OPSPILOT_TOKEN=test-token") {
+		t.Fatalf("full-check environment missing callback values")
+	}
+}
+
+func TestPikpakFullCheckBusyResponseDoesNotLeakPaths(t *testing.T) {
+	app := &App{pikpakCheckBusy: true, pikpakCheckRunID: "run-123"}
+	res := httptest.NewRecorder()
+	app.triggerPikpak115FullCheck(res, httptest.NewRequest(http.MethodPost, "/api/pikpak-115/full-check", nil))
+	if res.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusConflict)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload) != 2 || payload["ok"] != false || payload["run_id"] != "run-123" {
+		t.Fatalf("unexpected redacted response: %#v", payload)
+	}
+}
+
+func newTestApp(t *testing.T) *App {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	app := &App{db: db, token: "ingest-token", authConf: AuthConfig{Username: "opspilot", Password: "secret"}}
+	if err := app.migrate(); err != nil {
+		t.Fatal(err)
+	}
+	return app
 }

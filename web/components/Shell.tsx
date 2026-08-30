@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Activity, AlertTriangle, Code2, Home, List, LogOut, RefreshCw, Server, Settings, ShipWheel } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeftRight, Code2, Home, List, LogOut, RefreshCw, Server, Settings, ShipWheel } from "lucide-react";
 import useSWR from "swr";
+import { useRefreshNow, useRefreshSettings } from "@/components/AppProviders";
 import { clearAuthToken, fetcher, getStoredToken } from "@/lib/api";
-import type { Alert } from "@/lib/types";
+import { PIKPAK_MIGRATION_HREF } from "@/lib/routes";
+import type { CountResponse } from "@/lib/types";
 
 const navSections = [
   {
@@ -14,9 +16,15 @@ const navSections = [
     items: [
       { key: "dashboard", label: "总览", icon: Home, href: "/dashboard" },
       { key: "services", label: "服务", icon: Server, href: "/services" },
-      { key: "sync", label: "同步任务", icon: ShipWheel, href: "/sync" },
       { key: "alerts", label: "告警", icon: AlertTriangle, href: "/alerts", badge: true },
       { key: "logs", label: "日志", icon: List, href: "/logs" }
+    ]
+  },
+  {
+    label: "任务",
+    items: [
+      { key: "sync", label: "同步任务", icon: ShipWheel, href: "/sync" },
+      { key: "pikpak-115", label: "PikPak → 115", icon: ArrowLeftRight, href: PIKPAK_MIGRATION_HREF }
     ]
   },
   {
@@ -31,6 +39,8 @@ const navSections = [
 export function Shell({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   const pathname = usePathname();
   const [ready, setReady] = useState(false);
+  const refresh = useRefreshSettings();
+  const refreshNow = useRefreshNow();
 
   useEffect(() => {
     if (!getStoredToken()) {
@@ -40,7 +50,7 @@ export function Shell({ title, subtitle, children }: { title: string; subtitle?:
     setReady(true);
   }, [pathname]);
 
-  const { data, error } = useSWR<Alert[]>(ready ? "/api/alerts?status=firing" : null, fetcher, { refreshInterval: 30000 });
+  const { data, error } = useSWR<CountResponse>(ready ? "/api/alerts/count?status=firing" : null, fetcher);
 
   useEffect(() => {
     if (error?.name === "AuthError") {
@@ -48,7 +58,7 @@ export function Shell({ title, subtitle, children }: { title: string; subtitle?:
     }
   }, [error, pathname]);
 
-  const firing = data?.length || 0;
+  const firing = data?.count || 0;
 
   if (!ready) {
     return (
@@ -74,24 +84,26 @@ export function Shell({ title, subtitle, children }: { title: string; subtitle?:
             </div>
           </div>
 
-          {navSections.map((section) => (
-            <div key={section.label}>
-              <div className="nav-section">{section.label}</div>
-              <nav className="nav" aria-label={section.label}>
-                {section.items.map((n) => {
-                  const Icon = n.icon;
-                  const active = pathname === n.href || (n.href !== "/dashboard" && pathname.startsWith(n.href));
-                  return (
-                    <Link key={n.key} className={`nav-item ${active ? "active" : ""}`} href={n.href}>
-                      <Icon size={18} strokeWidth={2.2} />
-                      <span>{n.label}</span>
-                      {n.badge && firing ? <span className="nav-badge">{firing}</span> : null}
-                    </Link>
-                  );
-                })}
-              </nav>
-            </div>
-          ))}
+          <div className="nav-groups">
+            {navSections.map((section) => (
+              <div className="nav-group" key={section.label}>
+                <div className="nav-section">{section.label}</div>
+                <nav className="nav" aria-label={section.label}>
+                  {section.items.map((n) => {
+                    const Icon = n.icon;
+                    const active = pathname === n.href || (n.href !== "/dashboard" && pathname.startsWith(n.href));
+                    return (
+                      <Link key={n.key} className={`nav-item ${active ? "active" : ""}`} href={n.href} aria-label={n.label} title={n.label}>
+                        <Icon size={18} strokeWidth={2.2} />
+                        <span>{n.label}</span>
+                        {n.badge && firing ? <span className="nav-badge">{firing}</span> : null}
+                      </Link>
+                    );
+                  })}
+                </nav>
+              </div>
+            ))}
+          </div>
 
           <button
             type="button"
@@ -122,18 +134,24 @@ export function Shell({ title, subtitle, children }: { title: string; subtitle?:
               <div className="refresh-group">
                 <label htmlFor="auto-refresh">自动刷新</label>
                 <label className="switch" aria-label="自动刷新">
-                  <input id="auto-refresh" type="checkbox" defaultChecked />
+                  <input id="auto-refresh" type="checkbox" checked={refresh.enabled} onChange={(event) => refresh.setEnabled(event.target.checked)} />
                   <span className="track" />
                   <span className="thumb" />
                 </label>
               </div>
-              <select className="select" defaultValue="30" aria-label="刷新间隔">
+              <select
+                className="select"
+                value={String(refresh.intervalSeconds)}
+                onChange={(event) => refresh.setIntervalSeconds(Number(event.target.value))}
+                aria-label="刷新间隔"
+                disabled={!refresh.enabled}
+              >
                 <option value="10">10 秒</option>
                 <option value="30">30 秒</option>
                 <option value="60">60 秒</option>
                 <option value="300">5 分钟</option>
               </select>
-              <button className="btn btn-ghost btn-icon" onClick={() => location.reload()} title="立即刷新" type="button">
+              <button className="btn btn-ghost btn-icon" onClick={() => void refreshNow()} title="立即刷新" aria-label="立即刷新" type="button">
                 <RefreshCw size={16} />
               </button>
               <Clock />

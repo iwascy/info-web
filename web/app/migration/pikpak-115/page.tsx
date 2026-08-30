@@ -1,9 +1,10 @@
 "use client";
 
 import useSWR from "swr";
-import { Pause, Play, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import { Pause, Play, RefreshCw, SearchCheck } from "lucide-react";
 import { Shell } from "@/components/Shell";
-import { Badge, MetricCard, Progress, Speed, pickIcon } from "@/components/UI";
+import { Badge, MetricCard, PageLoading, Progress, Speed, pickIcon } from "@/components/UI";
 import { DualLine } from "@/components/Charts";
 import { apiPost, fetcher } from "@/lib/api";
 import { fmtBytes, fmtCompact, fmtNumber, fmtRelative } from "@/lib/format";
@@ -12,8 +13,9 @@ import type { AccountHealth, SyncTask } from "@/lib/types";
 const TASK_ID = "pikpak-to-115-migration";
 
 export default function Pikpak115Page() {
-  const { data: t, error, mutate } = useSWR<SyncTask>(`/api/sync-tasks/${TASK_ID}`, fetcher, { refreshInterval: 10000, shouldRetryOnError: false });
+  const { data: t, error, isLoading, mutate } = useSWR<SyncTask>(`/api/sync-tasks/${TASK_ID}`, fetcher, { shouldRetryOnError: false });
   const running = t?.status === "running";
+  const paused = t?.status === "paused";
   const total = t?.total || 0;
   const success = t?.success || 0;
   const failed = t?.failed || 0;
@@ -21,15 +23,39 @@ export default function Pikpak115Page() {
   const filePct = total > 0 ? success / total * 100 : t?.progress || 0;
   const bytePct = t?.total_bytes ? (t?.done_bytes || 0) / t.total_bytes * 100 : null;
   const accounts = t?.accounts || [];
+  const [checking, setChecking] = useState(false);
+  const [checkMessage, setCheckMessage] = useState("");
 
   async function pauseResume() {
-    if (!t) return;
+    if (!t || (!running && !paused)) return;
     await apiPost(`/api/sync-tasks/${TASK_ID}/${running ? "pause" : "resume"}`);
     mutate();
   }
 
+  async function triggerFullCheck() {
+    setChecking(true);
+    setCheckMessage("全量查漏已提交...");
+    try {
+      const res = await apiPost<{ run_id: string }>("/api/pikpak-115/full-check");
+      setCheckMessage(`全量查漏运行中：${res.run_id}`);
+      mutate();
+    } catch (err) {
+      setCheckMessage(err instanceof Error ? err.message : "全量查漏触发失败");
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <Shell title="PikPak → 115 迁移" subtitle="正在读取迁移工作台">
+        <PageLoading label="正在加载迁移数据" />
+      </Shell>
+    );
+  }
+
   return (
-    <Shell title="PikPak to 115 Migration" subtitle={t ? `${t.service_key} · ${t.task_id}` : "等待迁移项目上报真实数据"}>
+    <Shell title="PikPak → 115 迁移" subtitle={t ? `${t.service_key} · ${t.task_id}` : "等待迁移项目上报真实数据"}>
       {error ? <div className="card card-pad mb-20"><div className="empty"><h4>暂无迁移数据</h4><p>迁移项目上报 task_id=pikpak-to-115-migration 后会显示在这里</p></div></div> : null}
       <div className={`card card-pad mb-20 ${t?.status === "paused" || t?.status === "error" ? "card-error" : ""}`}>
         <div className="row wrap" style={{ gap: 16 }}>
@@ -40,10 +66,20 @@ export default function Pikpak115Page() {
           </div>
           <span className="spacer" />
           <div className="row gap-8">
-            <button className={running ? "btn btn-ghost" : "btn btn-primary"} onClick={pauseResume} disabled={!t}>{running ? <Pause size={16} /> : <Play size={16} />} {running ? "暂停" : "恢复"}</button>
-            <button className="btn btn-ghost btn-icon" onClick={() => mutate()}><RefreshCw size={16} /></button>
+            <button className="btn btn-ghost" onClick={triggerFullCheck} disabled={checking} type="button"><SearchCheck size={16} /> {checking ? "查漏中" : "全量查漏"}</button>
+            <button
+              className={paused ? "btn btn-primary" : "btn btn-ghost"}
+              onClick={pauseResume}
+              disabled={!running && !paused}
+              title={!running && !paused ? "仅运行中或已暂停的任务可操作" : undefined}
+              type="button"
+            >
+              {running ? <Pause size={16} /> : <Play size={16} />} {running ? "暂停" : paused ? "恢复" : "不可操作"}
+            </button>
+            <button className="btn btn-ghost btn-icon" onClick={() => mutate()} aria-label="刷新迁移数据" title="刷新迁移数据" type="button"><RefreshCw size={16} /></button>
           </div>
         </div>
+        {checkMessage ? <div className="text-muted mt-12 mono text-caption" role="status">{checkMessage}</div> : null}
         <hr className="divider" />
         <div className="stat-grid">
           <div className="stat-box"><div className="k">运行状态</div><div className={`v ${running ? "t-green" : "t-yellow"}`}>{t?.status || "未知"}</div></div>

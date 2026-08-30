@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { Download, Search } from "lucide-react";
 import { Shell } from "@/components/Shell";
-import { Chip, EmptyState, JsonBlock, PageStack, Toolbar } from "@/components/UI";
+import { Chip, EmptyState, JsonBlock, PageLoading, PageStack, Toolbar } from "@/components/UI";
 import { fetcher } from "@/lib/api";
 import { filterLabel, fmtRelative, fmtTime } from "@/lib/format";
 import type { EventRecord } from "@/lib/types";
@@ -12,7 +12,7 @@ import type { EventRecord } from "@/lib/types";
 const filters = ["all", "heartbeat", "progress", "error", "system"];
 
 export default function LogsPage() {
-  const { data } = useSWR<EventRecord[]>("/api/events?limit=200", fetcher, { refreshInterval: 10000 });
+  const { data, isLoading } = useSWR<EventRecord[]>("/api/events?limit=200", fetcher);
   const [type, setType] = useState("all");
   const [q, setQ] = useState("");
   const events = useMemo(
@@ -31,6 +31,14 @@ export default function LogsPage() {
     a.href = URL.createObjectURL(blob);
     a.download = "opspilot-events.json";
     a.click();
+  }
+
+  if (isLoading) {
+    return (
+      <Shell title="日志" subtitle="正在读取最近事件">
+        <PageLoading label="正在加载日志" />
+      </Shell>
+    );
   }
 
   return (

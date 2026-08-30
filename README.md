@@ -80,6 +80,14 @@ journalctl -u opspilot-web -f
 systemctl restart opspilot-api opspilot-web
 ```
 
+PikPak 到 115 的“全量查漏”动作可通过 API 服务的启动环境覆盖部署路径；这些值不会从 HTTP 请求读取，也不会返回给前端：
+
+```bash
+PIKPAK115_BIN=/opt/pikpak-115-migrate/pikpak-to-115
+PIKPAK115_ENV_FILE=/opt/pikpak-115-migrate/migrate.env
+PIKPAK115_FULL_CHECK_LOG=/var/log/opspilot/pikpak-115-full-check.log
+```
+
 ## 上报示例
 
 ```bash

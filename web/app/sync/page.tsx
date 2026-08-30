@@ -1,49 +1,52 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { Search } from "lucide-react";
 import { Shell } from "@/components/Shell";
-import { Badge, Chip, EmptyState, MetricCard, PageStack, Progress, Toolbar } from "@/components/UI";
+import { Badge, Chip, EmptyState, MetricCard, PageLoading, PageStack, Pagination, Progress, Toolbar } from "@/components/UI";
 import { fetcher } from "@/lib/api";
 import { filterLabel, fmtCompact, fmtRelative } from "@/lib/format";
-import type { SyncTask } from "@/lib/types";
+import { syncTaskHref } from "@/lib/routes";
+import type { PageResponse, SyncTask } from "@/lib/types";
 
-const filters = ["all", "error", "running", "success", "paused"];
+const filters = ["current", "error", "stale", "running", "success", "paused", "all"];
+const PAGE_SIZE = 30;
 
 export default function SyncPage() {
-  const { data } = useSWR<SyncTask[]>("/api/sync-tasks", fetcher, { refreshInterval: 10000 });
   const [q, setQ] = useState("");
-  const [filter, setFilter] = useState("all");
-  const tasks = useMemo(
-    () =>
-      (data || []).filter(
-        (t) =>
-          (filter === "all" || t.status === filter) &&
-          `${t.name} ${t.task_id} ${t.service_key}`.toLowerCase().includes(q.toLowerCase())
-      ),
-    [data, q, filter]
+  const [filter, setFilter] = useState("current");
+  const [page, setPage] = useState(1);
+  const query = useMemo(
+    () => `/api/sync-tasks/page?filter=${encodeURIComponent(filter)}&q=${encodeURIComponent(q)}&page=${page}&page_size=${PAGE_SIZE}`,
+    [filter, page, q]
   );
+  const { data, isLoading } = useSWR<PageResponse<SyncTask>>(query, fetcher);
+  const tasks = data?.items || [];
+  const counts = data?.counts || {};
   const hero = tasks.find((t) => t.status === "running") || tasks[0];
+
+  useEffect(() => setPage(1), [filter, q]);
 
   return (
     <Shell title="同步任务" subtitle="所有数据同步、迁移、批处理任务的实时进度。">
       <PageStack>
         <div className="grid grid-4">
-          <MetricCard label="运行中" value={data?.filter((t) => t.status === "running").length || 0} tone="blue" icon="activity" />
-          <MetricCard label="异常" value={data?.filter((t) => t.status === "error").length || 0} tone="red" icon="alert" />
-          <MetricCard label="已完成" value={data?.filter((t) => t.status === "success").length || 0} tone="green" icon="checkCircle" />
+          <MetricCard label="运行中" value={counts.running ?? "—"} tone="blue" icon="activity" />
+          <MetricCard label="异常 / 失联" value={(counts.error || 0) + (counts.stale || 0)} tone="red" icon="alert" />
+          <MetricCard label="已完成" value={counts.success ?? "—"} tone="green" icon="checkCircle" />
           <MetricCard
-            label="平均进度"
-            value={`${Math.round((data || []).reduce((s, t) => s + (t.progress || 0), 0) / Math.max(1, data?.length || 1))}%`}
+            label="当前范围"
+            value={counts.current ?? "—"}
+            note="运行、异常与近 7 天完成"
             tone="purple"
             icon="layers"
           />
         </div>
 
         {hero ? (
-          <Link href={`/sync/${hero.task_id}`} className={`card card-pad hoverable route-card ${hero.status === "error" ? "card-error" : ""}`}>
+          <Link href={syncTaskHref(hero.task_id)} className={`card card-pad hoverable route-card ${hero.status === "error" || hero.status === "stale" ? "card-error" : ""}`}>
             <div className="detail-header">
               <div className="min-w-0">
                 <div className="text-caption text-muted">当前任务</div>
@@ -80,7 +83,7 @@ export default function SyncPage() {
 
         <Toolbar
           left={filters.map((f) => (
-            <Chip key={f} active={filter === f} onClick={() => setFilter(f)}>
+            <Chip key={f} active={filter === f} onClick={() => setFilter(f)} count={counts[f]}>
               {filterLabel(f)}
             </Chip>
           ))}
@@ -92,7 +95,7 @@ export default function SyncPage() {
           }
         />
 
-        <div className="card card-pad">
+        {isLoading && !data ? <PageLoading label="正在加载同步任务" /> : <div className="card card-pad">
           <div className="table-wrap">
             <table className="tbl">
               <thead>
@@ -108,9 +111,9 @@ export default function SyncPage() {
               </thead>
               <tbody>
                 {tasks.map((t) => (
-                  <tr key={t.task_id} className={t.status === "error" ? "row-error" : ""}>
+                  <tr key={t.task_id} className={t.status === "error" || t.status === "stale" ? "row-error" : ""}>
                     <td>
-                      <Link href={`/sync/${t.task_id}`} className="route-card">
+                      <Link href={syncTaskHref(t.task_id)} className="route-card">
                         <div className="cell-title">{t.name}</div>
                         <div className="cell-key">{t.task_id}</div>
                       </Link>
@@ -134,9 +137,10 @@ export default function SyncPage() {
                 ))}
               </tbody>
             </table>
-            {tasks.length ? null : <EmptyState title="暂无同步任务" description="等待任务上报后将显示在此" />}
+            {tasks.length ? null : <EmptyState title="暂无同步任务" description="当前筛选条件下没有任务" />}
           </div>
-        </div>
+          {data ? <Pagination page={data.page} pageSize={data.page_size} total={data.total} onChange={setPage} /> : null}
+        </div>}
       </PageStack>
     </Shell>
   );

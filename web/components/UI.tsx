@@ -141,6 +141,35 @@ export function MetricSkeletonRow() {
   );
 }
 
+export function PageLoading({ label = "正在加载数据" }: { label?: string }) {
+  return (
+    <div className="page-stack" aria-busy="true" aria-label={label}>
+      <MetricSkeletonRow />
+      <div className="card card-pad loading-panel">
+        <div className="skeleton skeleton-line lg" />
+        <div className="skeleton skeleton-line" />
+        <div className="skeleton skeleton-line" />
+        <div className="skeleton skeleton-line" />
+      </div>
+    </div>
+  );
+}
+
+export function Pagination({ page, pageSize, total, onChange }: { page: number; pageSize: number; total: number; onChange: (page: number) => void }) {
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  return (
+    <div className="pagination" aria-label="分页">
+      <button className="btn btn-ghost btn-sm" type="button" disabled={page <= 1} onClick={() => onChange(page - 1)}>
+        上一页
+      </button>
+      <span className="text-muted tabnum">第 {page} / {pages} 页 · 共 {total} 条</span>
+      <button className="btn btn-ghost btn-sm" type="button" disabled={page >= pages} onClick={() => onChange(page + 1)}>
+        下一页
+      </button>
+    </div>
+  );
+}
+
 export function PageStack({ children }: { children: React.ReactNode }) {
   return <div className="page-stack">{children}</div>;
 }

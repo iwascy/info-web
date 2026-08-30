@@ -11,11 +11,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -24,12 +26,24 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const hiddenFileName = "文件名已隐藏"
+const (
+	hiddenFileName             = "文件名已隐藏"
+	pikpak115Binary            = "/opt/pikpak-115-migrate/pikpak-to-115"
+	pikpak115EnvFile           = "/opt/pikpak-115-migrate/migrate.env"
+	staleTaskAlertTitle        = "任务长时间无进度更新"
+	staleTaskAfter             = 10 * time.Minute
+	currentTaskSuccessLookback = 7 * 24 * time.Hour
+	maximumPageSize            = 100
+	defaultPageSize            = 20
+)
 
 type App struct {
-	db       *sql.DB
-	token    string
-	authConf AuthConfig
+	db               *sql.DB
+	token            string
+	authConf         AuthConfig
+	pikpakCheckMu    sync.Mutex
+	pikpakCheckBusy  bool
+	pikpakCheckRunID string
 }
 
 type AuthConfig struct {
@@ -265,10 +279,14 @@ func main() {
 		r.With(app.panelAuth).Get("/services/{key}", app.getService)
 		r.With(app.panelAuth).Delete("/services/{key}", app.deleteService)
 		r.With(app.panelAuth).Get("/sync-tasks", app.getSyncTasks)
+		r.With(app.panelAuth).Get("/sync-tasks/page", app.getSyncTasksPage)
 		r.With(app.panelAuth).Get("/sync-tasks/{id}", app.getSyncTask)
 		r.With(app.panelAuth).Post("/sync-tasks/{id}/pause", app.pauseTask)
 		r.With(app.panelAuth).Post("/sync-tasks/{id}/resume", app.resumeTask)
+		r.With(app.panelAuth).Post("/pikpak-115/full-check", app.triggerPikpak115FullCheck)
 		r.With(app.panelAuth).Get("/alerts", app.getAlerts)
+		r.With(app.panelAuth).Get("/alerts/page", app.getAlertsPage)
+		r.With(app.panelAuth).Get("/alerts/count", app.getAlertsCount)
 		r.With(app.panelAuth).Post("/alerts/resolve-all", app.resolveAllAlerts)
 		r.With(app.panelAuth).Post("/alerts/{id}/resolve", app.resolveAlert)
 		r.With(app.panelAuth).Post("/alerts/{id}/mute", app.muteAlert)
@@ -723,35 +741,23 @@ window_start=excluded.window_start,window_end=excluded.window_end,window_enabled
 	if status == "error" {
 		a.ensureAlert(serviceKey, &taskID, "high", val(msg, "同步任务失败"), val(msg, "progress error"))
 	}
+	_, _ = a.db.Exec("UPDATE alerts SET status='resolved', resolved_at=? WHERE task_id=? AND title=? AND status='firing'", now, taskID, staleTaskAlertTitle)
 	writeJSON(w, must(a.taskByID(taskID, true)))
 }
 
 func (a *App) getDashboard(w http.ResponseWriter, r *http.Request) {
 	a.checkAlerts()
 	services, _ := a.listServices()
-	tasks, _ := a.listTasks(false)
-	alerts, _ := a.listAlerts("firing")
+	tasks, _ := a.listTasksLimit(false, 5)
+	alerts, _ := a.listAlertsLimit("firing", 5)
 	traffic, _ := a.listServerTraffic(true)
 	counts := map[string]int{"healthy": 0, "running": 0, "warning": 0, "error": 0, "unknown": 0, "paused": 0}
 	for _, s := range services {
 		counts[s.Status]++
 	}
-	var completed int
 	var synced int64
-	var totalProgress float64
-	var progressCount int
-	for _, t := range tasks {
-		if t.Status == "success" {
-			completed++
-		}
-		if t.DoneBytes != nil {
-			synced += *t.DoneBytes
-		}
-		if t.Progress != nil {
-			totalProgress += *t.Progress
-			progressCount++
-		}
-	}
+	var avgProgress float64
+	_ = a.db.QueryRow("SELECT COALESCE(SUM(done_bytes), 0), COALESCE(AVG(progress), 0) FROM sync_tasks").Scan(&synced, &avgProgress)
 	var trafficBytes, trafficQuota int64
 	for _, tr := range traffic {
 		trafficBytes += tr.TotalBytes
@@ -761,10 +767,12 @@ func (a *App) getDashboard(w http.ResponseWriter, r *http.Request) {
 	if len(services) > 0 {
 		uptime = float64(counts["healthy"]+counts["running"]) / float64(len(services)) * 100
 	}
-	avgProgress := 0.0
-	if progressCount > 0 {
-		avgProgress = totalProgress / float64(progressCount)
-	}
+	today := time.Now()
+	todayStart := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, today.Location()).Format(time.RFC3339)
+	var todayAlerts, firingAlerts, completedToday int
+	_ = a.db.QueryRow("SELECT COUNT(*) FROM alerts WHERE julianday(triggered_at)>=julianday(?)", todayStart).Scan(&todayAlerts)
+	_ = a.db.QueryRow("SELECT COUNT(*) FROM alerts WHERE status='firing'").Scan(&firingAlerts)
+	_ = a.db.QueryRow("SELECT COUNT(*) FROM sync_tasks WHERE status='success' AND julianday(updated_at)>=julianday(?)", todayStart).Scan(&completedToday)
 	writeJSON(w, map[string]any{
 		"total_services":        len(services),
 		"healthy":               counts["healthy"],
@@ -773,8 +781,9 @@ func (a *App) getDashboard(w http.ResponseWriter, r *http.Request) {
 		"error":                 counts["error"],
 		"unknown":               counts["unknown"],
 		"paused":                counts["paused"],
-		"today_alerts":          len(alerts),
-		"today_completed_tasks": completed,
+		"today_alerts":          todayAlerts,
+		"firing_alerts":         firingAlerts,
+		"today_completed_tasks": completedToday,
 		"total_synced_bytes":    synced,
 		"uptime_pct":            round2(uptime),
 		"avg_progress_pct":      round2(avgProgress),
@@ -1067,6 +1076,114 @@ func (a *App) getSyncTasks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, tasks)
 }
 
+func (a *App) getSyncTasksPage(w http.ResponseWriter, r *http.Request) {
+	a.checkAlerts()
+	page, pageSize := pageParams(r)
+	filter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("filter")))
+	if filter == "" {
+		filter = "current"
+	}
+	if !oneOf(filter, "current", "all", "running", "stale", "error", "success", "paused") {
+		writeErr(w, http.StatusBadRequest, "invalid filter")
+		return
+	}
+
+	now := time.Now()
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	where, args := taskPageWhere(filter, q, now)
+	var total int
+	if err := a.db.QueryRow("SELECT COUNT(*) FROM sync_tasks"+where, args...).Scan(&total); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	counts, err := a.taskPageCounts(q, now)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	query := `SELECT id,service_key,task_id,name,status,stage,total,processed,success,failed,skipped,progress,message,started_at,updated_at,total_bytes,done_bytes,instant_files,uploaded_files,queue_size,cursor,download_speed,upload_speed,current_file,current_stage,window_start,window_end,window_enabled FROM sync_tasks` + where + `
+ORDER BY CASE status WHEN 'error' THEN 0 WHEN 'stale' THEN 1 WHEN 'running' THEN 2 WHEN 'warning' THEN 3 WHEN 'paused' THEN 4 WHEN 'success' THEN 5 ELSE 6 END, updated_at DESC, id DESC
+LIMIT ? OFFSET ?`
+	args = append(args, pageSize, (page-1)*pageSize)
+	rows, err := a.db.Query(query, args...)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	items := []SyncTask{}
+	for rows.Next() {
+		task, err := scanTask(rows)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		redactTaskFileNames(&task)
+		items = append(items, task)
+	}
+	if err := rows.Err(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{
+		"items":     items,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+		"counts":    counts,
+	})
+}
+
+func taskPageWhere(filter, q string, now time.Time) (string, []any) {
+	where := []string{}
+	args := []any{}
+	if q != "" {
+		where = append(where, "(LOWER(service_key) LIKE ? OR LOWER(task_id) LIKE ? OR LOWER(name) LIKE ? OR LOWER(COALESCE(message,'')) LIKE ?)")
+		like := "%" + q + "%"
+		args = append(args, like, like, like, like)
+	}
+	switch filter {
+	case "current":
+		where = append(where, "(status!='success' OR julianday(updated_at)>=julianday(?))")
+		args = append(args, now.Add(-currentTaskSuccessLookback).Format(time.RFC3339))
+	case "all":
+	default:
+		where = append(where, "status=?")
+		args = append(args, filter)
+	}
+	if len(where) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(where, " AND "), args
+}
+
+func (a *App) taskPageCounts(q string, now time.Time) (map[string]int, error) {
+	like := "%" + q + "%"
+	rows, err := a.db.Query(`SELECT status,updated_at FROM sync_tasks
+WHERE ?='' OR LOWER(service_key) LIKE ? OR LOWER(task_id) LIKE ? OR LOWER(name) LIKE ? OR LOWER(COALESCE(message,'')) LIKE ?`,
+		q, like, like, like, like)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := map[string]int{"all": 0, "current": 0, "running": 0, "stale": 0, "error": 0, "success": 0, "paused": 0}
+	cutoff := now.Add(-currentTaskSuccessLookback)
+	for rows.Next() {
+		var status, updatedAt string
+		if err := rows.Scan(&status, &updatedAt); err != nil {
+			return nil, err
+		}
+		counts["all"]++
+		counts[status]++
+		updated, err := time.Parse(time.RFC3339, updatedAt)
+		if status != "success" || (err == nil && !updated.Before(cutoff)) {
+			counts["current"]++
+		}
+	}
+	return counts, rows.Err()
+}
+
 func (a *App) getSyncTask(w http.ResponseWriter, r *http.Request) {
 	t, err := a.taskByID(chi.URLParam(r, "id"), true)
 	if err != nil {
@@ -1078,14 +1195,123 @@ func (a *App) getSyncTask(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) pauseTask(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	_, _ = a.db.Exec("UPDATE sync_tasks SET status='paused', message='用户手动暂停', updated_at=? WHERE task_id=? OR id=?", time.Now().Format(time.RFC3339), id, id)
-	writeJSON(w, must(a.taskByID(id, true)))
+	a.transitionTaskStatus(w, id, "running", "paused", "用户手动暂停")
 }
 
 func (a *App) resumeTask(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	_, _ = a.db.Exec("UPDATE sync_tasks SET status='running', message='已恢复运行', updated_at=? WHERE task_id=? OR id=?", time.Now().Format(time.RFC3339), id, id)
-	writeJSON(w, must(a.taskByID(id, true)))
+	a.transitionTaskStatus(w, id, "paused", "running", "已恢复运行")
+}
+
+func (a *App) transitionTaskStatus(w http.ResponseWriter, id, from, to, message string) {
+	res, err := a.db.Exec(
+		"UPDATE sync_tasks SET status=?, message=?, updated_at=? WHERE (task_id=? OR id=?) AND status=?",
+		to, message, time.Now().Format(time.RFC3339), id, id, from,
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	changed, _ := res.RowsAffected()
+	if changed == 0 {
+		if _, err := a.taskByID(id, false); err != nil {
+			writeErr(w, http.StatusNotFound, "sync task not found")
+			return
+		}
+		writeErr(w, http.StatusConflict, "task status does not allow this action")
+		return
+	}
+	task, err := a.taskByID(id, true)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, task)
+}
+
+func (a *App) triggerPikpak115FullCheck(w http.ResponseWriter, r *http.Request) {
+	a.pikpakCheckMu.Lock()
+	if a.pikpakCheckBusy {
+		runID := a.pikpakCheckRunID
+		a.pikpakCheckMu.Unlock()
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "run_id": runID})
+		return
+	}
+	runID := time.Now().Format("20060102-150405.000000000")
+	a.pikpakCheckBusy = true
+	a.pikpakCheckRunID = runID
+	a.pikpakCheckMu.Unlock()
+
+	logPath := env("PIKPAK115_FULL_CHECK_LOG", filepath.Join(os.TempDir(), "pikpak-115-full-check-"+runID+".log"))
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		a.finishPikpak115FullCheck(runID)
+		writeErr(w, http.StatusInternalServerError, "failed to start full check")
+		return
+	}
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		a.finishPikpak115FullCheck(runID)
+		writeErr(w, http.StatusInternalServerError, "failed to start full check")
+		return
+	}
+	cmd := pikpak115FullCheckCommand(localOpsPilotBaseURL(), a.currentToken())
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		_ = logFile.Close()
+		a.finishPikpak115FullCheck(runID)
+		writeErr(w, http.StatusInternalServerError, "failed to start full check")
+		return
+	}
+	go func() {
+		err := cmd.Wait()
+		if err != nil {
+			log.Printf("pikpak full check %s failed: %v", runID, err)
+		}
+		_ = logFile.Close()
+		a.finishPikpak115FullCheck(runID)
+	}()
+
+	writeJSON(w, map[string]any{"ok": true, "run_id": runID})
+}
+
+func (a *App) finishPikpak115FullCheck(runID string) {
+	a.pikpakCheckMu.Lock()
+	defer a.pikpakCheckMu.Unlock()
+	if a.pikpakCheckRunID == runID {
+		a.pikpakCheckBusy = false
+		a.pikpakCheckRunID = ""
+	}
+}
+
+func pikpak115FullCheckCommand(baseURL, token string) *exec.Cmd {
+	bin := env("PIKPAK115_BIN", pikpak115Binary)
+	envFile := env("PIKPAK115_ENV_FILE", pikpak115EnvFile)
+	cmd := exec.Command(bin, "--env-file", envFile, "full-check")
+	cmd.Env = append(os.Environ(),
+		"OPSPILOT_BASE_URL="+baseURL,
+		"OPSPILOT_TOKEN="+token,
+	)
+	return cmd
+}
+
+func localOpsPilotBaseURL() string {
+	if value := strings.TrimSpace(os.Getenv("PIKPAK115_OPSPILOT_BASE_URL")); value != "" {
+		return strings.TrimRight(value, "/")
+	}
+	addr := strings.TrimSpace(env("OPSPILOT_ADDR", ":8080"))
+	switch {
+	case strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://"):
+		return strings.TrimRight(addr, "/")
+	case strings.HasPrefix(addr, ":"):
+		return "http://127.0.0.1" + addr
+	case strings.HasPrefix(addr, "0.0.0.0:"):
+		return "http://127.0.0.1:" + strings.TrimPrefix(addr, "0.0.0.0:")
+	default:
+		return "http://" + addr
+	}
 }
 
 func (a *App) getAlerts(w http.ResponseWriter, r *http.Request) {
@@ -1095,6 +1321,157 @@ func (a *App) getAlerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, alerts)
+}
+
+func (a *App) getAlertsPage(w http.ResponseWriter, r *http.Request) {
+	a.checkAlerts()
+	page, pageSize := pageParams(r)
+	where, args, ok := alertPageWhere(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "invalid filter")
+		return
+	}
+	var total int
+	if err := a.db.QueryRow("SELECT COUNT(*) FROM alerts"+where, args...).Scan(&total); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	counts, err := a.alertCounts()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	query := `SELECT id,service_key,task_id,severity,title,message,status,triggered_at,resolved_at FROM alerts` + where + `
+ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, triggered_at DESC, id DESC LIMIT ? OFFSET ?`
+	args = append(args, pageSize, (page-1)*pageSize)
+	rows, err := a.db.Query(query, args...)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	items := []Alert{}
+	for rows.Next() {
+		var alert Alert
+		if err := rows.Scan(&alert.ID, &alert.ServiceKey, &alert.TaskID, &alert.Severity, &alert.Title, &alert.Message, &alert.Status, &alert.TriggeredAt, &alert.ResolvedAt); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		items = append(items, alert)
+	}
+	if err := rows.Err(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"items": items, "total": total, "page": page, "page_size": pageSize, "counts": counts})
+}
+
+func (a *App) getAlertsCount(w http.ResponseWriter, r *http.Request) {
+	a.checkAlerts()
+	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	if status == "" {
+		status = "firing"
+	}
+	if !oneOf(status, "firing", "resolved", "muted") {
+		writeErr(w, http.StatusBadRequest, "invalid status")
+		return
+	}
+	counts, err := a.alertCounts()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"count": counts[status], "counts": counts})
+}
+
+func alertPageWhere(r *http.Request) (string, []any, bool) {
+	filter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("filter")))
+	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	severity := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("severity")))
+	if filter == "" {
+		filter = "all"
+	}
+	switch filter {
+	case "all":
+	case "status":
+		if !oneOf(status, "firing", "resolved", "muted") {
+			return "", nil, false
+		}
+	case "severity":
+		if !oneOf(severity, "high", "medium", "low") {
+			return "", nil, false
+		}
+	case "firing", "resolved", "muted":
+		status = filter
+	case "high", "medium", "low":
+		severity = filter
+	default:
+		return "", nil, false
+	}
+	if status != "" && !oneOf(status, "firing", "resolved", "muted") {
+		return "", nil, false
+	}
+	if severity != "" && !oneOf(severity, "high", "medium", "low") {
+		return "", nil, false
+	}
+	where := []string{}
+	args := []any{}
+	if status != "" {
+		where = append(where, "status=?")
+		args = append(args, status)
+	}
+	if severity != "" {
+		where = append(where, "severity=?")
+		args = append(args, severity)
+	}
+	if len(where) == 0 {
+		return "", args, true
+	}
+	return " WHERE " + strings.Join(where, " AND "), args, true
+}
+
+func (a *App) alertCounts() (map[string]int, error) {
+	rows, err := a.db.Query("SELECT status,severity,COUNT(*) FROM alerts GROUP BY status,severity")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := map[string]int{"all": 0, "firing": 0, "resolved": 0, "muted": 0, "high": 0, "medium": 0, "low": 0}
+	for rows.Next() {
+		var status, severity string
+		var count int
+		if err := rows.Scan(&status, &severity, &count); err != nil {
+			return nil, err
+		}
+		counts["all"] += count
+		counts[status] += count
+		counts[severity] += count
+	}
+	return counts, rows.Err()
+}
+
+func pageParams(r *http.Request) (int, int) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+	if pageSize < 1 {
+		pageSize = defaultPageSize
+	}
+	if pageSize > maximumPageSize {
+		pageSize = maximumPageSize
+	}
+	return page, pageSize
+}
+
+func oneOf(value string, allowed ...string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) resolveAlert(w http.ResponseWriter, r *http.Request) {
@@ -1249,7 +1626,18 @@ FROM dc_speed_stats WHERE service_key=? ORDER BY dc_id`, serviceKey)
 }
 
 func (a *App) listTasks(detail bool) ([]SyncTask, error) {
-	rows, err := a.db.Query(`SELECT id,service_key,task_id,name,status,stage,total,processed,success,failed,skipped,progress,message,started_at,updated_at,total_bytes,done_bytes,instant_files,uploaded_files,queue_size,cursor,download_speed,upload_speed,current_file,current_stage,window_start,window_end,window_enabled FROM sync_tasks`)
+	return a.listTasksLimit(detail, 0)
+}
+
+func (a *App) listTasksLimit(detail bool, limit int) ([]SyncTask, error) {
+	query := `SELECT id,service_key,task_id,name,status,stage,total,processed,success,failed,skipped,progress,message,started_at,updated_at,total_bytes,done_bytes,instant_files,uploaded_files,queue_size,cursor,download_speed,upload_speed,current_file,current_stage,window_start,window_end,window_enabled FROM sync_tasks
+ORDER BY CASE status WHEN 'error' THEN 0 WHEN 'stale' THEN 1 WHEN 'running' THEN 2 WHEN 'warning' THEN 3 WHEN 'paused' THEN 4 WHEN 'success' THEN 5 ELSE 6 END, updated_at DESC, id DESC`
+	args := []any{}
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := a.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1266,14 +1654,7 @@ func (a *App) listTasks(detail bool) ([]SyncTask, error) {
 		redactTaskFileNames(&t)
 		out = append(out, t)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		oi, oj := taskOrder(out[i].Status), taskOrder(out[j].Status)
-		if oi != oj {
-			return oi < oj
-		}
-		return out[i].UpdatedAt > out[j].UpdatedAt
-	})
-	return out, nil
+	return out, rows.Err()
 }
 
 func (a *App) taskByID(id string, detail bool) (SyncTask, error) {
@@ -1513,13 +1894,21 @@ func trafficUsagePct(total, quota int64) *float64 {
 }
 
 func (a *App) listAlerts(status string) ([]Alert, error) {
+	return a.listAlertsLimit(status, 0)
+}
+
+func (a *App) listAlertsLimit(status string, limit int) ([]Alert, error) {
 	q := "SELECT id,service_key,task_id,severity,title,message,status,triggered_at,resolved_at FROM alerts"
 	args := []any{}
 	if status != "" && status != "all" {
 		q += " WHERE status=?"
 		args = append(args, status)
 	}
-	q += " ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, triggered_at DESC"
+	q += " ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, triggered_at DESC, id DESC"
+	if limit > 0 {
+		q += " LIMIT ?"
+		args = append(args, limit)
+	}
 	rows, err := a.db.Query(q, args...)
 	if err != nil {
 		return nil, err
@@ -1677,47 +2066,84 @@ func (a *App) checkAlerts() {
 	if err != nil {
 		return
 	}
-	defer rows.Close()
 	now := time.Now()
+	type serviceAlert struct {
+		key     string
+		timeout int64
+	}
+	serviceAlerts := []serviceAlert{}
 	for rows.Next() {
 		var key string
 		var last *string
 		var timeout int64
-		_ = rows.Scan(&key, &last, &timeout)
+		if err := rows.Scan(&key, &last, &timeout); err != nil {
+			continue
+		}
 		if last == nil {
 			continue
 		}
 		t, err := time.Parse(time.RFC3339, *last)
 		if err == nil && now.Sub(t) > time.Duration(timeout)*time.Second {
-			_, _ = a.db.Exec("UPDATE services SET status='error', message=? WHERE service_key=?", "心跳超时", key)
-			a.ensureAlert(key, nil, "high", "服务心跳超时", fmt.Sprintf("超过 %d 秒未收到心跳", timeout))
+			serviceAlerts = append(serviceAlerts, serviceAlert{key: key, timeout: timeout})
 		}
 	}
-	taskRows, err := a.db.Query("SELECT service_key,task_id,updated_at,failed,total,status FROM sync_tasks WHERE status='running'")
+	_ = rows.Close()
+	for _, alert := range serviceAlerts {
+		_, _ = a.db.Exec("UPDATE services SET status='error', message=? WHERE service_key=?", "心跳超时", alert.key)
+		a.ensureAlert(alert.key, nil, "high", "服务心跳超时", fmt.Sprintf("超过 %d 秒未收到心跳", alert.timeout))
+	}
+
+	taskRows, err := a.db.Query("SELECT service_key,task_id,updated_at,failed,total,status FROM sync_tasks WHERE status IN ('running','stale')")
 	if err != nil {
 		return
 	}
-	defer taskRows.Close()
+	type taskAlert struct {
+		key, taskID, updated string
+		stale                bool
+		failedRate           bool
+	}
+	taskAlerts := []taskAlert{}
 	for taskRows.Next() {
 		var key, taskID, updated, status string
 		var failed, total *int64
-		_ = taskRows.Scan(&key, &taskID, &updated, &failed, &total, &status)
+		if err := taskRows.Scan(&key, &taskID, &updated, &failed, &total, &status); err != nil {
+			continue
+		}
+		alert := taskAlert{key: key, taskID: taskID, updated: updated}
 		t, err := time.Parse(time.RFC3339, updated)
-		if err == nil && now.Sub(t) > 10*time.Minute {
-			a.ensureAlert(key, &taskID, "medium", "任务长时间无进度更新", "running 任务疑似卡住")
+		if status == "running" && err == nil && now.Sub(t) > staleTaskAfter {
+			alert.stale = true
 		}
 		if failed != nil && total != nil && *total > 0 && float64(*failed)/float64(*total) > 0.01 {
-			a.ensureAlert(key, &taskID, "medium", "失败率超过阈值", "失败率超过 1%")
+			alert.failedRate = true
+		}
+		taskAlerts = append(taskAlerts, alert)
+	}
+	_ = taskRows.Close()
+	for _, alert := range taskAlerts {
+		if alert.stale {
+			res, err := a.db.Exec("UPDATE sync_tasks SET status='stale', message='超过 10 分钟无进度更新' WHERE task_id=? AND status='running' AND updated_at=?", alert.taskID, alert.updated)
+			if err == nil {
+				changed, _ := res.RowsAffected()
+				if changed > 0 {
+					taskID := alert.taskID
+					a.ensureAlert(alert.key, &taskID, "medium", staleTaskAlertTitle, "running 任务疑似卡住")
+				}
+			}
+		}
+		if alert.failedRate {
+			taskID := alert.taskID
+			a.ensureAlert(alert.key, &taskID, "medium", "失败率超过阈值", "失败率超过 1%")
 		}
 	}
 }
 
 func (a *App) ensureAlert(serviceKey string, taskID *string, severity, title, msg string) {
-	var id int64
-	err := a.db.QueryRow("SELECT id FROM alerts WHERE service_key=? AND IFNULL(task_id,'')=IFNULL(?,'') AND title=? AND status='firing'", serviceKey, taskID, title).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		_, _ = a.db.Exec("INSERT INTO alerts(service_key,task_id,severity,title,message,status,triggered_at) VALUES(?,?,?,?,?,'firing',?)", serviceKey, taskID, severity, title, msg, time.Now().Format(time.RFC3339))
-	}
+	_, _ = a.db.Exec(`INSERT INTO alerts(service_key,task_id,severity,title,message,status,triggered_at)
+SELECT ?,?,?,?,?, 'firing', ?
+WHERE NOT EXISTS (
+	SELECT 1 FROM alerts WHERE service_key=? AND IFNULL(task_id,'')=IFNULL(?,'') AND title=? AND status='firing'
+)`, serviceKey, taskID, severity, title, msg, time.Now().Format(time.RFC3339), serviceKey, taskID, title)
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -1756,7 +2182,7 @@ func normalizeTaskStatus(s string) string {
 	switch s {
 	case "ok", "healthy", "success":
 		return "success"
-	case "running", "warning", "error", "paused":
+	case "running", "warning", "error", "paused", "stale":
 		return s
 	default:
 		return "running"
@@ -1767,6 +2193,8 @@ func deriveServiceFromTask(s string) string {
 	switch s {
 	case "error":
 		return "error"
+	case "stale", "warning":
+		return "warning"
 	case "paused":
 		return "paused"
 	case "success":
@@ -1781,7 +2209,22 @@ func serviceOrder(s string) int {
 }
 
 func taskOrder(s string) int {
-	return map[string]int{"error": 0, "running": 1, "warning": 2, "success": 3, "paused": 4}[s]
+	switch s {
+	case "error":
+		return 0
+	case "stale":
+		return 1
+	case "running":
+		return 2
+	case "warning":
+		return 3
+	case "paused":
+		return 4
+	case "success":
+		return 5
+	default:
+		return 6
+	}
 }
 
 func val(s *string, fallback string) string {

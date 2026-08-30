@@ -1,19 +1,19 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import useSWR from "swr";
 import { Grid2X2, List, Search, Trash2 } from "lucide-react";
 import { Shell } from "@/components/Shell";
-import { Badge, Chip, EmptyState, MetricCard, PageStack, Progress, ServiceCell, Toolbar, TypeTag } from "@/components/UI";
+import { Badge, Chip, EmptyState, MetricCard, PageLoading, PageStack, Progress, ServiceCell, Toolbar, TypeTag } from "@/components/UI";
 import { apiDelete, fetcher } from "@/lib/api";
 import { filterLabel, fmtRelative, statusTone } from "@/lib/format";
+import { serviceHref } from "@/lib/routes";
 import type { Service } from "@/lib/types";
 
 const filters = ["all", "error", "warning", "running", "healthy", "unknown", "paused"];
 
 export default function ServicesPage() {
-  const { data, mutate } = useSWR<Service[]>("/api/services", fetcher, { refreshInterval: 10000 });
+  const { data, isLoading, mutate } = useSWR<Service[]>("/api/services", fetcher);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
   const [grid, setGrid] = useState(false);
@@ -31,6 +31,14 @@ export default function ServicesPage() {
       await apiDelete(`/api/services/${key}`);
       mutate();
     }
+  }
+
+  if (isLoading) {
+    return (
+      <Shell title="服务" subtitle="正在读取被监控服务">
+        <PageLoading label="正在加载服务" />
+      </Shell>
+    );
   }
 
   return (
@@ -67,7 +75,7 @@ export default function ServicesPage() {
             {services.map((s) => (
               <div key={s.service_key} className={`card card-pad hoverable ${s.status === "error" ? "card-error" : ""}`}>
                 <div className="row">
-                  <ServiceCell href={`/services/${s.service_key}`} name={s.name} sub={s.service_key} type={s.type} />
+                  <ServiceCell href={serviceHref(s.service_key)} name={s.name} sub={s.service_key} type={s.type} />
                   <span className="spacer" />
                   <Badge status={s.status} />
                 </div>
@@ -115,7 +123,7 @@ export default function ServicesPage() {
                   {services.map((s) => (
                     <tr key={s.service_key} className={s.status === "error" ? "row-error" : ""}>
                       <td>
-                        <ServiceCell href={`/services/${s.service_key}`} name={s.name} sub={s.service_key} type={s.type} />
+                        <ServiceCell href={serviceHref(s.service_key)} name={s.name} sub={s.service_key} type={s.type} />
                       </td>
                       <td>
                         <TypeTag type={s.type} />
@@ -150,12 +158,6 @@ export default function ServicesPage() {
             </div>
           </div>
         )}
-
-        <div>
-          <Link href="/services/pikpak-115" className="btn btn-primary">
-            打开迁移专属页
-          </Link>
-        </div>
       </PageStack>
     </Shell>
   );
