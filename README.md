@@ -1,6 +1,6 @@
 # OpsPilot
 
-个人服务状态监控面板，包含 Next.js 前端和 Go + SQLite 后端。
+个人服务状态与通用传输进度面板，包含 Next.js 前端和 Go + SQLite 后端。任意项目可按动态分类上报独立的下载、上传进度，无需开发专属展示页。
 
 ## 启动
 
@@ -43,7 +43,7 @@ NEXT_PUBLIC_API_BASE=http://localhost:8080 npm run dev
 }
 ```
 
-前端登录页使用配置文件中的账号密码登录。登录成功后，后端会返回面板会话令牌给浏览器保存，用于调用受保护的面板 API。首次启动时后端会生成真实接入令牌并打印在 API 日志里，也可以通过 `OPSPILOT_TOKEN` 显式指定；被监控服务上报接口仍使用该接入令牌作为 `Authorization: Bearer`。
+前端登录页使用配置文件中的账号密码登录。登录成功后，后端会返回面板会话令牌给浏览器保存，用于调用受保护的面板 API。首次启动时后端会生成全局接入令牌，也可以通过 `OPSPILOT_TOKEN` 显式指定。新项目建议在“接入中心”为每个 `service_key` 生成独立令牌；项目令牌只能写入自己的服务，支持单独轮换和吊销。
 
 ## 目录
 
@@ -90,6 +90,31 @@ PIKPAK115_FULL_CHECK_LOG=/var/log/opspilot/pikpak-115-full-check.log
 
 ## 上报示例
 
+### 通用多分类传输
+
+新项目优先使用完整快照接口。分类名称和数量完全由项目上报；同一分类可分别包含 `download`、`upload`，也可以只包含一个方向。`sequence` 必须在同一任务内单调递增。
+
+```bash
+curl -X POST http://localhost:8080/api/transfer-progress \
+  -H "Authorization: Bearer <PROJECT_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schema_version":1,
+    "sequence":1,
+    "service":{"key":"your-service-key","name":"服务展示名"},
+    "task":{"id":"stable-run-id","name":"任务展示名","status":"running"},
+    "categories":[{
+      "key":"a","name":"A 类","order":1,
+      "download":{"status":"running","total_bytes":1000000,"done_bytes":420000,"speed_bps":10485760},
+      "upload":{"status":"running","total_items":100,"done_items":31,"speed_bps":8388608}
+    }]
+  }'
+```
+
+百分比由服务端优先按字节、其次按项目数计算；两类总量都未知时可显式传 `progress`。快照按 `task.id + category.key + direction` 幂等更新，旧序列不会覆盖新状态。
+
+### 兼容接口
+
 ```bash
 curl -X POST http://localhost:8080/api/heartbeat \
   -H "Authorization: Bearer <OPSPILOT_TOKEN>" \
@@ -103,6 +128,8 @@ curl -X POST http://localhost:8080/api/progress \
   -H "Content-Type: application/json" \
   -d '{"service_key":"your-service-key","task_id":"stable-task-id","name":"任务展示名","stage":"running","total":1000,"processed":420,"success":410,"failed":2,"progress":42.0}'
 ```
+
+旧 `/api/progress` 继续用于单进度任务。进入 `http://localhost:3000/api-docs` 可填写项目身份并一键生成项目 Token 与完整 AI 接入提示词。
 
 Telegram 下载服务可按完整快照上报各 DC 的下载速度聚合：
 

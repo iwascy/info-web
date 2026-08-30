@@ -11,7 +11,9 @@ export const STATUS_LABEL: Record<string, string> = {
   muted: "已静默",
   success: "成功",
   ok: "正常",
-  retry_waiting: "等待重试"
+  retry_waiting: "等待重试",
+  pending: "等待中",
+  skipped: "已跳过"
 };
 
 export const TYPE_LABEL: Record<string, string> = {

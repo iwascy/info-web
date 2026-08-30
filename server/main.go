@@ -66,41 +66,43 @@ type Service struct {
 }
 
 type SyncTask struct {
-	ID             int64     `json:"id"`
-	ServiceKey     string    `json:"service_key"`
-	TaskID         string    `json:"task_id"`
-	Name           string    `json:"name"`
-	Status         string    `json:"status"`
-	Stage          *string   `json:"stage"`
-	Total          *int64    `json:"total"`
-	Processed      *int64    `json:"processed"`
-	Success        *int64    `json:"success"`
-	Failed         *int64    `json:"failed"`
-	Skipped        *int64    `json:"skipped"`
-	Progress       *float64  `json:"progress"`
-	Message        *string   `json:"message"`
-	StartedAt      *string   `json:"started_at"`
-	UpdatedAt      string    `json:"updated_at"`
-	TotalBytes     *int64    `json:"total_bytes"`
-	DoneBytes      *int64    `json:"done_bytes"`
-	InstantFiles   *int64    `json:"instant_files"`
-	UploadedFiles  *int64    `json:"uploaded_files"`
-	QueueSize      *int64    `json:"queue_size"`
-	Cursor         *string   `json:"cursor"`
-	DownloadSpeed  *int64    `json:"download_speed"`
-	UploadSpeed    *int64    `json:"upload_speed"`
-	CurrentFile    *string   `json:"current_file"`
-	CurrentStage   *string   `json:"current_stage"`
-	WindowStart    *string   `json:"window_start"`
-	WindowEnd      *string   `json:"window_end"`
-	WindowEnabled  *bool     `json:"window_enabled"`
-	DownloadSeries []int64   `json:"download_series,omitempty"`
-	UploadSeries   []int64   `json:"upload_series,omitempty"`
-	Stages         []Stage   `json:"stages,omitempty"`
-	Batches        []Batch   `json:"batches,omitempty"`
-	ErrorSamples   []ErrSam  `json:"error_samples,omitempty"`
-	RecentFiles    []File    `json:"recent_files,omitempty"`
-	Accounts       []Account `json:"accounts,omitempty"`
+	ID                 int64              `json:"id"`
+	ServiceKey         string             `json:"service_key"`
+	TaskID             string             `json:"task_id"`
+	Name               string             `json:"name"`
+	Status             string             `json:"status"`
+	Stage              *string            `json:"stage"`
+	Total              *int64             `json:"total"`
+	Processed          *int64             `json:"processed"`
+	Success            *int64             `json:"success"`
+	Failed             *int64             `json:"failed"`
+	Skipped            *int64             `json:"skipped"`
+	Progress           *float64           `json:"progress"`
+	Message            *string            `json:"message"`
+	StartedAt          *string            `json:"started_at"`
+	UpdatedAt          string             `json:"updated_at"`
+	TotalBytes         *int64             `json:"total_bytes"`
+	DoneBytes          *int64             `json:"done_bytes"`
+	InstantFiles       *int64             `json:"instant_files"`
+	UploadedFiles      *int64             `json:"uploaded_files"`
+	QueueSize          *int64             `json:"queue_size"`
+	Cursor             *string            `json:"cursor"`
+	DownloadSpeed      *int64             `json:"download_speed"`
+	UploadSpeed        *int64             `json:"upload_speed"`
+	CurrentFile        *string            `json:"current_file"`
+	CurrentStage       *string            `json:"current_stage"`
+	WindowStart        *string            `json:"window_start"`
+	WindowEnd          *string            `json:"window_end"`
+	WindowEnabled      *bool              `json:"window_enabled"`
+	DownloadSeries     []int64            `json:"download_series,omitempty"`
+	UploadSeries       []int64            `json:"upload_series,omitempty"`
+	Stages             []Stage            `json:"stages,omitempty"`
+	Batches            []Batch            `json:"batches,omitempty"`
+	ErrorSamples       []ErrSam           `json:"error_samples,omitempty"`
+	RecentFiles        []File             `json:"recent_files,omitempty"`
+	Accounts           []Account          `json:"accounts,omitempty"`
+	TransferSummary    *TransferSummary   `json:"transfer_summary,omitempty"`
+	TransferCategories []TransferCategory `json:"transfer_categories,omitempty"`
 }
 
 type Event struct {
@@ -270,6 +272,7 @@ func main() {
 		r.With(app.panelAuth).Get("/auth/me", app.me)
 		r.With(app.ingestAuth).Post("/heartbeat", app.postHeartbeat)
 		r.With(app.ingestAuth).Post("/progress", app.postProgress)
+		r.With(app.ingestAuth).Post("/transfer-progress", app.postTransferProgress)
 		r.With(app.ingestAuth).Post("/server-traffic", app.postServerTraffic)
 		r.With(app.ingestAuth).Post("/dc-download-stats", app.postDCSpeedOverview)
 		r.With(app.panelAuth).Get("/server-traffic", app.getServerTraffic)
@@ -294,6 +297,10 @@ func main() {
 		r.With(app.panelAuth).Get("/settings", app.getSettings)
 		r.With(app.panelAuth).Put("/settings", app.putSettings)
 		r.With(app.panelAuth).Post("/token/reset", app.resetToken)
+		r.With(app.panelAuth).Get("/integrations", app.getIntegrations)
+		r.With(app.panelAuth).Post("/integrations", app.createIntegration)
+		r.With(app.panelAuth).Post("/integrations/{key}/rotate", app.rotateIntegration)
+		r.With(app.panelAuth).Delete("/integrations/{key}", app.revokeIntegration)
 	})
 
 	addr := env("OPSPILOT_ADDR", ":8080")
@@ -451,6 +458,58 @@ CREATE TABLE IF NOT EXISTS account_health (
   note TEXT,
   ok INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS transfer_snapshots (
+  task_id TEXT PRIMARY KEY,
+  schema_version INTEGER NOT NULL,
+  sequence INTEGER NOT NULL,
+  observed_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS transfer_categories (
+  task_id TEXT NOT NULL,
+  category_key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(task_id, category_key)
+);
+CREATE TABLE IF NOT EXISTS transfer_channels (
+  task_id TEXT NOT NULL,
+  category_key TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  status TEXT NOT NULL,
+  total_items INTEGER,
+  done_items INTEGER,
+  success_items INTEGER,
+  failed_items INTEGER,
+  total_bytes INTEGER,
+  done_bytes INTEGER,
+  speed_bps INTEGER,
+  progress REAL,
+  current_item TEXT,
+  message TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(task_id, category_key, direction)
+);
+CREATE TABLE IF NOT EXISTS transfer_samples (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  category_key TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  speed_bps INTEGER NOT NULL DEFAULT 0,
+  progress REAL,
+  observed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_transfer_samples_task ON transfer_samples(task_id, id DESC);
+CREATE TABLE IF NOT EXISTS ingest_integrations (
+  service_key TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  token_hash TEXT UNIQUE NOT NULL,
+  token_prefix TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_used_at TEXT,
+  revoked_at TEXT
+);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -548,16 +607,28 @@ func (a *App) purgeDemoData() {
 		"sync_user_001",
 	}
 	for _, key := range serviceKeys {
+		rows, _ := a.db.Query("SELECT task_id FROM sync_tasks WHERE service_key=?", key)
+		taskIDsForService := []string{}
+		if rows != nil {
+			for rows.Next() {
+				var taskID string
+				if rows.Scan(&taskID) == nil {
+					taskIDsForService = append(taskIDsForService, taskID)
+				}
+			}
+			_ = rows.Close()
+		}
+		for _, taskID := range taskIDsForService {
+			_ = a.deleteTaskDetails(a.db, taskID)
+		}
 		_, _ = a.db.Exec("DELETE FROM alerts WHERE service_key=?", key)
 		_, _ = a.db.Exec("DELETE FROM events WHERE service_key=?", key)
+		_, _ = a.db.Exec("DELETE FROM ingest_integrations WHERE service_key=?", key)
 		_, _ = a.db.Exec("DELETE FROM sync_tasks WHERE service_key=?", key)
 		_, _ = a.db.Exec("DELETE FROM services WHERE service_key=?", key)
 	}
 	for _, taskID := range taskIDs {
-		_, _ = a.db.Exec("DELETE FROM account_health WHERE task_id=?", taskID)
-		_, _ = a.db.Exec("DELETE FROM recent_files WHERE task_id=?", taskID)
-		_, _ = a.db.Exec("DELETE FROM error_samples WHERE task_id=?", taskID)
-		_, _ = a.db.Exec("DELETE FROM batch_records WHERE task_id=?", taskID)
+		_ = a.deleteTaskDetails(a.db, taskID)
 		_, _ = a.db.Exec("DELETE FROM alerts WHERE task_id=?", taskID)
 		_, _ = a.db.Exec("DELETE FROM events WHERE task_id=?", taskID)
 		_, _ = a.db.Exec("DELETE FROM sync_tasks WHERE task_id=?", taskID)
@@ -566,11 +637,12 @@ func (a *App) purgeDemoData() {
 
 func (a *App) ingestAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if bearerToken(r) != a.currentToken() {
+		scope, ok := a.authenticateIngestToken(bearerToken(r))
+		if !ok {
 			writeErr(w, http.StatusUnauthorized, "invalid bearer token")
 			return
 		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, withIngestScope(r, scope))
 	})
 }
 
@@ -648,6 +720,9 @@ func (a *App) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "service_key and status are required")
 		return
 	}
+	if !requireIngestService(w, r, p.ServiceKey) {
+		return
+	}
 	now := time.Now().Format(time.RFC3339)
 	name := p.ServiceKey
 	if p.Name != nil && *p.Name != "" {
@@ -686,6 +761,9 @@ func (a *App) postProgress(w http.ResponseWriter, r *http.Request) {
 	taskID, _ := p["task_id"].(string)
 	if serviceKey == "" || taskID == "" {
 		writeErr(w, 400, "service_key and task_id are required")
+		return
+	}
+	if !requireIngestService(w, r, serviceKey) {
 		return
 	}
 	now := time.Now().Format(time.RFC3339)
@@ -798,6 +876,9 @@ func (a *App) getDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) postServerTraffic(w http.ResponseWriter, r *http.Request) {
+	if !requireGlobalIngest(w, r) {
+		return
+	}
 	var p struct {
 		ServerKey  string  `json:"server_key"`
 		ServerName string  `json:"server_name"`
@@ -888,6 +969,9 @@ func (a *App) postDCSpeedOverview(w http.ResponseWriter, r *http.Request) {
 	p.ServiceKey = strings.TrimSpace(p.ServiceKey)
 	if p.ServiceKey == "" {
 		writeErr(w, http.StatusBadRequest, "service_key is required")
+		return
+	}
+	if !requireIngestService(w, r, p.ServiceKey) {
 		return
 	}
 	if p.GeneratedAt == "" {
@@ -1061,9 +1145,52 @@ func (a *App) getService(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) deleteService(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
-	_, _ = a.db.Exec("DELETE FROM dc_speed_stats WHERE service_key=?", key)
-	_, _ = a.db.Exec("DELETE FROM dc_speed_overviews WHERE service_key=?", key)
-	_, _ = a.db.Exec("DELETE FROM services WHERE service_key=?", key)
+	tx, err := a.db.Begin()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.Query("SELECT task_id FROM sync_tasks WHERE service_key=?", key)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	taskIDs := []string{}
+	for rows.Next() {
+		var taskID string
+		if err := rows.Scan(&taskID); err != nil {
+			_ = rows.Close()
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		taskIDs = append(taskIDs, taskID)
+	}
+	_ = rows.Close()
+	for _, taskID := range taskIDs {
+		if err := a.deleteTaskDetails(tx, taskID); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	for _, query := range []string{
+		"DELETE FROM dc_speed_stats WHERE service_key=?",
+		"DELETE FROM dc_speed_overviews WHERE service_key=?",
+		"DELETE FROM alerts WHERE service_key=?",
+		"DELETE FROM events WHERE service_key=?",
+		"DELETE FROM sync_tasks WHERE service_key=?",
+		"DELETE FROM ingest_integrations WHERE service_key=?",
+		"DELETE FROM services WHERE service_key=?",
+	} {
+		if _, err := tx.Exec(query, key); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -1702,13 +1829,18 @@ func scanTask(row scanner) (SyncTask, error) {
 }
 
 func (a *App) fillTaskDetail(t *SyncTask) {
-	if strings.Contains(t.TaskID, "pikpak") || strings.Contains(t.ServiceKey, "pikpak") {
+	a.fillTransferDetail(t)
+	if len(t.TransferCategories) > 0 {
+		// Transfer tasks describe their own dynamic categories and do not need a hard-coded stage flow.
+	} else if strings.Contains(t.TaskID, "pikpak") || strings.Contains(t.ServiceKey, "pikpak") {
 		t.Stages = stageFlow([]Stage{{Key: "scan", Name: "扫描 PikPak"}, {Key: "download", Name: "下载 / 中转"}, {Key: "upload", Name: "上传 115"}, {Key: "verify", Name: "sha1 校验"}, {Key: "done", Name: "完成"}}, val(t.CurrentStage, val(t.Stage, "")), t.Status, t.Progress)
 		t.Accounts = a.listAccounts(t.TaskID)
 	} else {
 		t.Stages = stageFlow([]Stage{{Key: "connect", Name: "连接源"}, {Key: "extract", Name: "增量抽取"}, {Key: "cleaning", Name: "数据清洗", Progress: t.Progress}, {Key: "writing", Name: "写入目标"}, {Key: "verify", Name: "数据校验"}}, val(t.Stage, ""), t.Status, t.Progress)
 	}
-	t.DownloadSeries, t.UploadSeries = a.throughputSeries(t.TaskID)
+	if len(t.TransferCategories) == 0 {
+		t.DownloadSeries, t.UploadSeries = a.throughputSeries(t.TaskID)
+	}
 	t.Batches = a.listBatches(t.TaskID)
 	t.ErrorSamples = a.listErrorSamples(t.TaskID)
 	t.RecentFiles = a.listRecentFiles(t.TaskID)
@@ -2182,7 +2314,7 @@ func normalizeTaskStatus(s string) string {
 	switch s {
 	case "ok", "healthy", "success":
 		return "success"
-	case "running", "warning", "error", "paused", "stale":
+	case "running", "warning", "error", "paused", "stale", "retry_waiting":
 		return s
 	default:
 		return "running"

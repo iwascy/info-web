@@ -8,8 +8,7 @@ const nextConfig = {
   turbopack: { root },
   async redirects() {
     return [
-      { source: "/services/pikpak-115", destination: "/migration/pikpak-115", permanent: true },
-      { source: "/sync/pikpak-to-115-migration", destination: "/migration/pikpak-115", permanent: true }
+      { source: "/migration/pikpak-115", destination: "/sync/pikpak-to-115-migration", permanent: true }
     ];
   }
 };

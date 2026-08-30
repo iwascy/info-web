@@ -26,11 +26,7 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
     body: body ? JSON.stringify(body) : undefined
   });
   if (!res.ok) throw new Error(await res.text());
-  const payload = await res.json();
-  if (payload && typeof payload === "object" && "token" in payload && typeof payload.token === "string") {
-    cachedToken = payload.token;
-  }
-  return payload;
+  return res.json();
 }
 
 export async function apiDelete<T>(path: string): Promise<T> {

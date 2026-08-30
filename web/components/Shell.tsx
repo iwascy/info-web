@@ -3,11 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Activity, AlertTriangle, ArrowLeftRight, Code2, Home, List, LogOut, RefreshCw, Server, Settings, ShipWheel } from "lucide-react";
+import { Activity, AlertTriangle, Code2, Home, List, LogOut, RefreshCw, Server, Settings, ShipWheel } from "lucide-react";
 import useSWR from "swr";
 import { useRefreshNow, useRefreshSettings } from "@/components/AppProviders";
 import { clearAuthToken, fetcher, getStoredToken } from "@/lib/api";
-import { PIKPAK_MIGRATION_HREF } from "@/lib/routes";
 import type { CountResponse } from "@/lib/types";
 
 const navSections = [
@@ -23,15 +22,14 @@ const navSections = [
   {
     label: "任务",
     items: [
-      { key: "sync", label: "同步任务", icon: ShipWheel, href: "/sync" },
-      { key: "pikpak-115", label: "PikPak → 115", icon: ArrowLeftRight, href: PIKPAK_MIGRATION_HREF }
+      { key: "sync", label: "同步任务", icon: ShipWheel, href: "/sync" }
     ]
   },
   {
     label: "系统",
     items: [
       { key: "settings", label: "设置", icon: Settings, href: "/settings" },
-      { key: "api-docs", label: "API 文档", icon: Code2, href: "/api-docs" }
+      { key: "api-docs", label: "接入中心", icon: Code2, href: "/api-docs" }
     ]
   }
 ];

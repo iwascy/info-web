@@ -7,14 +7,18 @@ import { Badge, EmptyState, JsonBlock, MetricCard, PageLoading, PageStack, Progr
 import { DualLine, LineChart } from "@/components/Charts";
 import { fetcher } from "@/lib/api";
 import { fmtBytes, fmtCompact, fmtRelative, fmtTime } from "@/lib/format";
-import type { SyncTask } from "@/lib/types";
+import type { SyncTask, TransferAggregate, TransferChannel } from "@/lib/types";
 
 export default function SyncDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { data: t, isLoading } = useSWR<SyncTask>(`/api/sync-tasks/${id}`, fetcher);
   const stage = t?.current_stage || t?.stage || "—";
+  const transfer = t?.transfer_summary;
+  const hasTransfer = Boolean(t?.transfer_categories?.length && transfer);
   const byteProgress = t?.total_bytes ? ((t?.done_bytes || 0) / t.total_bytes) * 100 : null;
-  const hasDualSeries = Boolean(t?.download_series?.length || t?.upload_series?.length);
+  const downloadSeries = transfer?.download_series || t?.download_series;
+  const uploadSeries = transfer?.upload_series || t?.upload_series;
+  const hasDualSeries = Boolean(downloadSeries?.length || uploadSeries?.length);
   const hasRetry = t?.attempt != null || t?.max_attempts != null || t?.retry_count != null || t?.dead_letter != null;
   const retryValue = t?.max_attempts != null ? `${t?.attempt || 0}/${t.max_attempts}` : t?.retry_count != null ? t.retry_count : "—";
 
@@ -38,20 +42,49 @@ export default function SyncDetailPage() {
             <span className="spacer" />
             <Badge status={t?.status || "unknown"} />
           </div>
-          <div className="progress-row mt-20">
-            <Progress value={t?.progress} large tone={t?.status === "error" ? "red" : "blue"} />
-            <span className="pct">{Math.round(t?.progress || 0)}%</span>
+          {!hasTransfer ? (
+            <div className="progress-row mt-20">
+              <Progress value={t?.progress} large tone={t?.status === "error" ? "red" : "blue"} />
+              <span className="pct">{Math.round(t?.progress || 0)}%</span>
+            </div>
+          ) : null}
+        </div>
+
+        {hasTransfer && transfer ? (
+          <>
+            <div className="cols-12">
+              <TransferAggregatePanel label="总下载" aggregate={transfer.download} direction="download" />
+              <TransferAggregatePanel label="总上传" aggregate={transfer.upload} direction="upload" />
+            </div>
+            <div className="card card-pad">
+              <div className="card-head">
+                <h3>分类传输进度</h3>
+                <span className="sub">{transfer.category_count} 个分类 · 下载与上传独立统计</span>
+              </div>
+              <div className="transfer-category-list">
+                {t?.transfer_categories?.map((category) => (
+                  <div className="transfer-category-row" key={category.key}>
+                    <div className="transfer-category-name">
+                      <strong>{category.name}</strong>
+                      <span className="cell-key">{category.key}</span>
+                    </div>
+                    <TransferChannelView label="下载" channel={category.download} direction="download" />
+                    <TransferChannelView label="上传" channel={category.upload} direction="upload" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="grid grid-4">
+            <MetricCard label="总量" value={fmtCompact(t?.total)} tone="blue" />
+            <MetricCard label="已处理" value={fmtCompact(t?.processed)} tone="cyan" />
+            <MetricCard label="成功" value={fmtCompact(t?.success)} tone="green" />
+            <MetricCard label="失败" value={fmtCompact(t?.failed)} tone="red" />
           </div>
-        </div>
+        )}
 
-        <div className="grid grid-4">
-          <MetricCard label="总量" value={fmtCompact(t?.total)} tone="blue" />
-          <MetricCard label="已处理" value={fmtCompact(t?.processed)} tone="cyan" />
-          <MetricCard label="成功" value={fmtCompact(t?.success)} tone="green" />
-          <MetricCard label="失败" value={fmtCompact(t?.failed)} tone="red" />
-        </div>
-
-        {(t?.current_file || t?.download_speed || t?.upload_speed || stage !== "—") && (
+        {!hasTransfer && (t?.current_file || t?.download_speed || t?.upload_speed || stage !== "—") && (
           <div className="grid grid-4">
             <MetricCard
               label="当前阶段"
@@ -71,7 +104,7 @@ export default function SyncDetailPage() {
           </div>
         )}
 
-        {(t?.total_bytes != null || hasRetry) && (
+        {!hasTransfer && (t?.total_bytes != null || hasRetry) && (
           <div className="cols-12">
             <div className={`card card-pad ${hasRetry ? "span-7" : "span-12"}`}>
               <div className="card-head">
@@ -133,7 +166,7 @@ export default function SyncDetailPage() {
           </div>
         )}
 
-        <div className="card card-pad">
+        {!hasTransfer ? <div className="card card-pad">
           <div className="card-head">
             <h3>阶段流</h3>
             <span className="sub">按当前阶段自动点亮</span>
@@ -152,7 +185,7 @@ export default function SyncDetailPage() {
           ) : (
             <EmptyState description="暂无阶段信息" />
           )}
-        </div>
+        </div> : null}
 
         <div className="cols-12">
           <div className="span-7 card card-pad">
@@ -160,10 +193,10 @@ export default function SyncDetailPage() {
               <h3>吞吐趋势</h3>
               <span className="sub">下载 / 上传</span>
             </div>
-            {hasDualSeries && t?.upload_series?.length ? (
-              <DualLine a={t?.download_series} b={t?.upload_series} />
-            ) : t?.download_series?.length ? (
-              <LineChart series={t.download_series} />
+            {hasDualSeries && uploadSeries?.length ? (
+              <DualLine a={downloadSeries} b={uploadSeries} />
+            ) : downloadSeries?.length ? (
+              <LineChart series={downloadSeries} />
             ) : (
               <EmptyState description="暂无吞吐采样" />
             )}
@@ -279,6 +312,64 @@ export default function SyncDetailPage() {
       </PageStack>
     </Shell>
   );
+}
+
+function TransferAggregatePanel({ label, aggregate, direction }: { label: string; aggregate: TransferAggregate; direction: "download" | "upload" }) {
+  const tone = direction === "download" ? "blue" : "green";
+  const countLabel = aggregate.total_items > 0 ? `${fmtCompact(aggregate.done_items)} / ${fmtCompact(aggregate.total_items)} 项` : "未提供项目总数";
+  const byteLabel = aggregate.total_bytes > 0 ? `${fmtBytes(aggregate.done_bytes)} / ${fmtBytes(aggregate.total_bytes)}` : "未提供字节总量";
+  const basisLabel = aggregate.progress_basis === "bytes" ? "按字节汇总" : aggregate.progress_basis === "items" ? "按项目数汇总" : "按上报百分比汇总";
+  return (
+    <div className="span-6 card card-pad transfer-overview">
+      <div className="card-head">
+        <h3>{label}</h3>
+        <Badge status={aggregate.status} />
+      </div>
+      <div className="transfer-overview-speed"><Speed value={aggregate.speed_bps} arrow={direction === "upload" ? "up" : "down"} /></div>
+      <div className="progress-row mt-12">
+        <Progress value={aggregate.progress} large tone={tone} />
+        <span className="pct">{formatProgress(aggregate.progress)}</span>
+      </div>
+      <div className="transfer-overview-meta">
+        <span>{byteLabel}</span>
+        <span>{countLabel}</span>
+        <span>{basisLabel}</span>
+        {aggregate.excluded_channels ? <span>{aggregate.excluded_channels} 类未计入汇总</span> : null}
+        {aggregate.indeterminate_channels ? <span>{aggregate.indeterminate_channels} 类进度未知</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function TransferChannelView({ label, channel, direction }: { label: string; channel?: TransferChannel; direction: "download" | "upload" }) {
+  if (!channel) {
+    return <div className="transfer-channel transfer-channel-empty"><span>{label}</span><span>未启用</span></div>;
+  }
+  const tone = direction === "download" ? "blue" : "green";
+  const itemProgress = channel.total_items != null ? `${fmtCompact(channel.done_items)} / ${fmtCompact(channel.total_items)} 项` : null;
+  const byteProgress = channel.total_bytes != null ? `${fmtBytes(channel.done_bytes)} / ${fmtBytes(channel.total_bytes)}` : null;
+  return (
+    <div className="transfer-channel">
+      <div className="transfer-channel-head">
+        <span className={`transfer-direction t-${tone}`}>{label}</span>
+        <Speed value={channel.speed_bps} arrow={direction === "upload" ? "up" : "down"} />
+        <Badge status={channel.status} />
+      </div>
+      <div className="progress-row mt-8">
+        <Progress value={channel.progress} tone={tone} />
+        <span className="pct">{formatProgress(channel.progress)}</span>
+      </div>
+      <div className="transfer-channel-meta">
+        <span>{byteProgress || itemProgress || "总量未知"}</span>
+        {byteProgress && itemProgress ? <span>{itemProgress}</span> : null}
+      </div>
+      {channel.current_item || channel.message ? <div className="text-muted text-caption mt-8 truncate-1">{channel.current_item || channel.message}</div> : null}
+    </div>
+  );
+}
+
+function formatProgress(value?: number | null) {
+  return value == null ? "—" : `${Math.round(value)}%`;
 }
 
 function stageLabel(stage?: string | null) {

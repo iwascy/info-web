@@ -69,6 +69,65 @@ export interface SyncTask {
   error_samples?: ErrorSample[];
   recent_files?: RecentFile[];
   accounts?: AccountHealth[];
+  transfer_summary?: TransferSummary;
+  transfer_categories?: TransferCategory[];
+}
+
+export interface TransferSummary {
+  category_count: number;
+  download: TransferAggregate;
+  upload: TransferAggregate;
+  download_series?: number[];
+  upload_series?: number[];
+}
+
+export interface TransferAggregate {
+  status: string;
+  progress: number | null;
+  total_items: number;
+  done_items: number;
+  success_items: number;
+  failed_items: number;
+  total_bytes: number;
+  done_bytes: number;
+  speed_bps: number;
+  channel_count: number;
+  indeterminate_channels: number;
+  excluded_channels: number;
+  progress_basis: "bytes" | "items" | "reported" | "";
+}
+
+export interface TransferCategory {
+  key: string;
+  name: string;
+  order: number;
+  download?: TransferChannel;
+  upload?: TransferChannel;
+}
+
+export interface TransferChannel {
+  status: string;
+  total_items: number | null;
+  done_items: number | null;
+  success_items: number | null;
+  failed_items: number | null;
+  total_bytes: number | null;
+  done_bytes: number | null;
+  speed_bps: number | null;
+  progress: number | null;
+  current_item: string | null;
+  message: string | null;
+  updated_at: string;
+}
+
+export interface IngestIntegration {
+  service_key: string;
+  name: string;
+  token_prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  token?: string;
 }
 
 export interface Stage { key: string; name: string; status: string; progress?: number; meta?: string }
